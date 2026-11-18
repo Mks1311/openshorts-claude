@@ -32,6 +32,10 @@ WHISPER_TRANSCRIBE_PARAMS = {
     "vad_filter": True,
     "condition_on_previous_text": False,
     "word_timestamps": True,
+    # No temperature fallback: on noisy audio (game streams, music) every
+    # rejected 30 s window was re-decoded up to 5 more times, 5-6x the time
+    # (90 s of Hindi gameplay on CPU small/int8: 252 s -> 45 s, more words).
+    "temperature": 0.0,
 }
 
 
