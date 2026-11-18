@@ -5,6 +5,7 @@ import {
   Sparkles, History,
 } from 'lucide-react';
 import MediaInput from './components/MediaInput';
+import JobList from './components/JobList';
 import McpConnectCard from './components/McpConnectCard';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
@@ -442,7 +443,7 @@ function App() {
     let interval;
     let failures = 0;
     if (status === 'processing' && jobId) {
-      interval = setInterval(async () => {
+      const tick = async () => {
         try {
           const data = await pollJob(jobId);
           failures = 0;
@@ -473,7 +474,9 @@ function App() {
             setJobGone(true);
           }
         }
-      }, 2000);
+      };
+      interval = setInterval(tick, 2000);
+      tick(); // an opened job shows where it stands now, not in 2 s
     }
     return () => clearInterval(interval);
   }, [status, jobId]);
@@ -574,6 +577,15 @@ function App() {
     localStorage.removeItem(SESSION_KEY);
   };
   useEffect(() => { handleResetRef.current = handleReset; });
+
+  // Open a job from the list: the poll above fills in its state.
+  const openJob = (job) => {
+    handleReset();
+    setJobId(job.job_id);
+    setProcessingMedia({ type: 'server', payload: `/api/source/${job.job_id}` });
+    setLogs(['Loading job...']);
+    setStatus('processing');
+  };
 
   const saveKey = (which) => {
     setKeySaved(which);
@@ -815,6 +827,7 @@ function App() {
                       </p>
                     </div>
                     <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'} />
+                    <JobList onOpen={openJob} />
                   </div>
 
                   <aside className="lg:pt-[8.5rem]" aria-label="what happens">

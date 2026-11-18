@@ -47,8 +47,6 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Configuration
-# Default to 1 if not set, but user can set higher for powerful servers
-MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "5"))
 MAX_FILE_SIZE_MB = 2048  # 2GB limit
 
 # How TikTok receives our uploads. MEDIA_UPLOAD lands the video in the user's
@@ -134,6 +132,9 @@ for _stream in (sys.stdout, sys.stderr):
 # when BILLING_ENABLED is set. With the flag off, the app behaves exactly as the
 # self-hosted BYOK app does today (no extra dependencies required).
 BILLING_ENABLED = os.environ.get("BILLING_ENABLED", "").lower() in ("1", "true", "yes")
+# Self-host runs one job at a time, so a queue of submissions finishes one after
+# another; set it higher on a box with the VRAM for parallel jobs.
+MAX_CONCURRENT_JOBS = int(os.environ.get("MAX_CONCURRENT_JOBS", "5" if BILLING_ENABLED else "1"))
 
 # Job/file retention (issue #46). Self-host defaults to 24h: the 1h sweep kept
 # deleting finished projects under users who never touched their env, and the
@@ -1920,6 +1921,7 @@ def _recover_jobs_from_disk():
                 'output_dir': job_path,
                 'user_id': owner,
                 'result': {'clips': clips, 'cost_analysis': data.get('cost_analysis')},
+                'label': data.get('source_video'),
             }
             recovered += 1
         except Exception as e:
@@ -5698,6 +5700,8 @@ async def process_endpoint(
         'env': env,
         'output_dir': job_output_dir,
         'attestation': attestation,
+        # What the job list shows: the link, or the uploaded file's name.
+        'label': url or (file.filename if file else None),
         'user_id': user_id,
         'reservation_id': reservation_id,
         'watermark': env.get("WATERMARK") == "1",
@@ -5845,6 +5849,36 @@ async def get_status(job_id: str, request: Request):
         # offer), so the dashboard can say so next to the clips.
         "partial": job.get('partial'),
     }
+
+
+@app.get("/api/jobs")
+async def list_jobs():
+    """Every job this server holds, newest first: the dashboard's job list, so
+    queued, running and finished jobs stay reachable after "new video".
+
+    shortcut: self-host only, where every job is the one operator's. The cloud
+    would need an owner filter (and BYOK jobs have no owner) before opening it.
+    """
+    if BILLING_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+    out = []
+    for job_id, job in list(jobs.items()):
+        clips = (job.get('result') or {}).get('clips') or []
+        queue = queue_snapshot(job_id)
+        try:
+            at = float(job.get('submitted_at') or os.path.getmtime(job['output_dir']))
+        except (OSError, KeyError, TypeError, ValueError):
+            at = None
+        out.append({
+            "job_id": job_id,
+            "status": _presented_status(job_id, job),
+            "label": job.get('label'),
+            "submitted_at": at,
+            "clips": len(clips),
+            "position": queue["position"] if queue else None,
+        })
+    out.sort(key=lambda j: j["submitted_at"] or 0, reverse=True)
+    return {"jobs": out}
 
 
 @app.post("/api/jobs/{job_id}/stop")

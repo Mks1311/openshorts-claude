@@ -447,7 +447,7 @@ lives in [`examples/n8n/`](examples/n8n/).
 | `AWS_REGION` | AWS region (default: us-east-1) |
 | `AWS_S3_BUCKET` | Private bucket for clip backup |
 | `AWS_S3_PUBLIC_BUCKET` | Public bucket for gallery/avatars |
-| `MAX_CONCURRENT_JOBS` | Concurrent processing limit (default: 5) |
+| `MAX_CONCURRENT_JOBS` | Concurrent processing limit (default: 1 on self-host, so submissions run as a queue; 5 with billing) |
 | `LLM_BASE_URL` | OpenAI-compatible server for the moment picker (Ollama, vLLM, LM Studio...). Set it and the Gemini key becomes optional |
 | `LLM_MODEL` | Model name on that server (default `llama3.1:8b`) |
 | `LLM_API_KEY` | Bearer token for that server, if it checks one |

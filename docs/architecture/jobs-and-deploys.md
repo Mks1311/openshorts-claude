@@ -3,7 +3,10 @@
 ## Concurrency model
 
 Async job queue with semaphore-based concurrency control, sized by
-`MAX_CONCURRENT_JOBS` (default 5). Jobs auto-clean after 1 hour.
+`MAX_CONCURRENT_JOBS` (default 5 with billing, 1 on self-host so submitted jobs
+run one after another). Jobs auto-clean after 1 hour (24 h on self-host).
+Self-host lists every held job at `GET /api/jobs` (the dashboard's job list
+under the new-video form); the cloud answers 404 there.
 
 The real limit on a GPU host is VRAM, not CPU: each `main.py` job holds Parakeet
 (onnxruntime CUDA), TransNetV2 (torch, ~2 GB at peak) and an NVENC session. When
