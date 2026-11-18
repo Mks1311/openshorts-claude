@@ -557,19 +557,24 @@ def _ai_save_kwargs(img):
     return kwargs
 
 
-def finalize_thumbnail(img, out_path):
-    """Cover-crop to 1280x720 and save a JPEG under YouTube's 2 MB limit.
-
-    Every file that leaves here is machine-marked as AI-generated — see
-    AI_XMP_PACKET.
-    """
+def _cover(img):
+    """Cover-crop to THUMB_W x THUMB_H (RGB)."""
     img = img.convert("RGB")
     scale = max(THUMB_W / img.width, THUMB_H / img.height)
     img = img.resize((max(THUMB_W, int(img.width * scale + 0.5)),
                       max(THUMB_H, int(img.height * scale + 0.5))), Image.LANCZOS)
     left = (img.width - THUMB_W) // 2
     top = (img.height - THUMB_H) // 2
-    img = img.crop((left, top, left + THUMB_W, top + THUMB_H))
+    return img.crop((left, top, left + THUMB_W, top + THUMB_H))
+
+
+def finalize_thumbnail(img, out_path):
+    """Cover-crop to 1280x720 and save a JPEG under YouTube's 2 MB limit.
+
+    Every file that leaves here is machine-marked as AI-generated — see
+    AI_XMP_PACKET.
+    """
+    img = _cover(img)
     marks = _ai_save_kwargs(img)
     for q in (92, 88, 84, 78, 70, 60):
         try:
@@ -652,9 +657,15 @@ def generate_thumbnail(api_key, title, session_id, face_image_path=None, bg_imag
     person reference when the user picked a frame instead of uploading a photo.
     Returns [{"url", "text", "why"}] (only the ones that rendered).
     """
-    client = genai.Client(api_key=api_key)
     output_dir = os.path.join("output", "thumbnails", session_id)
     os.makedirs(output_dir, exist_ok=True)
+    import llm_backend
+    if llm_backend.provider() == "claude":
+        base = (face_image_path if face_image_path and os.path.exists(face_image_path)
+                else (frame_reference or {}).get("path") or bg_image_path)
+        return _frame_thumbnails(title, session_id, output_dir, base, extra_prompt, count,
+                                 video_context, burn_text, thumbnail_text_hint, language)
+    client = genai.Client(api_key=api_key)
 
     # References travel as immutable byte parts: one PIL Image shared by the
     # worker threads below raced inside the SDK's encoder and every call died.
@@ -711,6 +722,29 @@ def generate_thumbnail(api_key, title, session_id, face_image_path=None, bg_imag
     if not thumbnails:
         last_error = next((r["error"] for r in results if "error" in r), "unknown")
         raise RuntimeError(f"All thumbnail generations failed. Last error: {last_error}")
+    return thumbnails
+
+
+def _frame_thumbnails(title, session_id, output_dir, base_path, extra_prompt, count,
+                      video_context, burn_text, thumbnail_text_hint, language):
+    """No image model (Claude cannot draw): Claude plans `count` concepts and
+    each one's text, side and colour is burned on the same photo or frame."""
+    if not base_path or not os.path.exists(base_path):
+        raise RuntimeError("Pick a frame or upload a photo: without an image model "
+                           "the thumbnail is built on it.")
+    concepts = plan_thumbnail_concepts(
+        None, title, count, video_context=video_context, extra_prompt=extra_prompt,
+        thumbnail_text_hint=thumbnail_text_hint, has_person=True, language=language)
+    base = _cover(Image.open(base_path))
+    batch = uuid.uuid4().hex[:6]
+    thumbnails = []
+    for i, c in enumerate(concepts):
+        out_path = os.path.join(output_dir, f"thumb_{batch}_{i + 1}.jpg")
+        img = burn_thumbnail_text(base, c["text"], c["text_position"], c["text_color"]) if burn_text else base
+        finalize_thumbnail(img, out_path)
+        print(f"✅ [Thumbnail] Saved: {out_path} (\"{c['text']}\", {c['text_position']})")
+        thumbnails.append({"url": f"/thumbnails/{session_id}/{os.path.basename(out_path)}",
+                           "text": c["text"], "why": c["why"], "fallback": False})
     return thumbnails
 
 

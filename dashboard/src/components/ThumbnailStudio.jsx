@@ -3,6 +3,7 @@ import { Upload, Image, Loader2, Send, Check, Download, ArrowRight, ArrowLeft, S
 import { getApiUrl } from '../config';
 import { apiFetch, QuotaError, openQuotaWall } from '../lib/api';
 import StepIndicator from './ui/StepIndicator';
+import { useAuth } from '../contexts/AuthContext';
 import SegmentedControl from './ui/SegmentedControl';
 
 const STEPS = ['Input', 'Titles', 'Generate', 'Description', 'Publish'];
@@ -83,7 +84,9 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
   // Managed (hosted plan): Gemini runs server-side via the bearer token, no BYOK key.
   // Only send X-Gemini-Key for self-host BYOK. apiFetch attaches the bearer token.
   const keyHeader = geminiApiKey ? { 'X-Gemini-Key': geminiApiKey } : {};
-  const needsKey = !geminiApiKey && !managed;
+  const { localLlm } = useAuth();
+  // Claude self-host (LLM_PROVIDER=claude) needs no key: the server's CLI answers.
+  const needsKey = !geminiApiKey && !managed && localLlm?.provider !== 'claude';
   // Step management
   const [step, setStep] = useState(0);
   const [mode, setMode] = useState(null); // 'video' or 'manual'

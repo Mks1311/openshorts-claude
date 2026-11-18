@@ -983,7 +983,10 @@ function App() {
   // A self-hosted server running the moment picker on a local LLM
   // (LLM_BASE_URL) does not need a Gemini key for the core pipeline.
   const geminiOk = !!apiKey || !!localLlm;
-  const keysMissing = !billingEnabled && (!geminiOk || !uploadPostKey);
+  // Claude self-host: every model call runs on the server's signed-in claude CLI.
+  const claudeLlm = localLlm?.provider === 'claude';
+  // Upload-Post is only needed to post, never to make clips.
+  const keysMissing = !billingEnabled && !geminiOk;
   const needsPlan = billingEnabled && !isManaged;   // hosted, signed-out or no active plan/trial
 
   // Fresh sign-up: Clip Generator tutorial (AuthContext set os_show_clip_tutorial
@@ -1412,9 +1415,10 @@ function App() {
     { id: 'dashboard', ord: '01', icon: LayoutDashboard, label: 'Clip Generator', short: 'clips', primary: true },
     // Cloud only: it runs on the managed pipeline and the Upload-Post connection.
     ...(billingEnabled ? [{ id: 'autopilot', ord: '02', icon: Rocket, label: 'Autopilot', short: 'autopilot', isNew: true }] : []),
-    { id: 'saasshorts', ord: '03', icon: Sparkles, label: 'AI Shorts', short: 'ai shorts', byok: true, primary: true },
+    // AI Shorts and its UGC gallery need fal + ElevenLabs keys: hidden on a Claude self-host.
+    ...(claudeLlm ? [] : [{ id: 'saasshorts', ord: '03', icon: Sparkles, label: 'AI Shorts', short: 'ai shorts', byok: true, primary: true }]),
     { id: 'ai-agent', ord: '04', icon: Bot, label: 'AI Agent', short: 'agent', byok: true },
-    { id: 'ugc-gallery', ord: '05', icon: LayoutGrid, label: 'UGC Gallery', short: 'gallery', primary: true },
+    ...(claudeLlm ? [] : [{ id: 'ugc-gallery', ord: '05', icon: LayoutGrid, label: 'UGC Gallery', short: 'gallery', primary: true }]),
     { id: 'thumbnails', ord: '06', icon: Image, label: 'YouTube Studio', short: 'studio', primary: true },
     ...(billingEnabled && isSignedIn ? [{ id: 'history', ord: '07', icon: History, label: 'History', short: 'history' }] : []),
     { id: 'settings', ord: '08', icon: Settings, label: 'Settings', short: 'settings' },
@@ -1851,7 +1855,17 @@ function App() {
                 </div>
               ) : (
                 <>
-              <KeyInput onKeySet={setApiKey} savedKey={apiKey} />
+              {claudeLlm ? (
+                <div className="card p-4 sm:p-6">
+                  <h2 className="text-base font-medium text-ink lowercase mb-2">AI model</h2>
+                  <p className="text-xs text-muted leading-relaxed">
+                    Every AI step runs on Claude ({localLlm.model}) through the <code>claude</code> CLI
+                    signed in on the server, on your Claude subscription. No API key needed.
+                  </p>
+                </div>
+              ) : (
+                <KeyInput onKeySet={setApiKey} savedKey={apiKey} />
+              )}
 
               <div className="card p-4 sm:p-6 mt-8">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
@@ -1861,7 +1875,7 @@ function App() {
                     </div>
                     <h2 className="text-base font-medium text-ink lowercase">Social Integration</h2>
                   </div>
-                  <span className="badge-warn">Required</span>
+                  <span className="badge-warn">Only to post</span>
                 </div>
                 <p className="text-xs text-muted mb-6 leading-relaxed">
                   Required to publish your clips to TikTok, Instagram Reels, and YouTube Shorts via <strong>Upload-Post</strong>.

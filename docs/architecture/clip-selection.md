@@ -82,7 +82,12 @@ With Claude the frame stages need no Gemini key either: `llm_backend.ask_frames`
 sends JPEG frames as image blocks (layout picker, screen check, burned-in
 subtitle band, hook grounding) on `claude_cli.VISION_MODEL` (haiku), and the
 Thumbnail Studio's title, concept and description calls go through
-`thumbnail._ask_text`. Thumbnail images still need Gemini's image model.
+`thumbnail._ask_text`. Claude cannot draw, so `generate_thumbnail` burns each
+planned concept's text (side, colour) onto the uploaded photo, the picked frame,
+or else the session's first face frame (`thumbnail._frame_thumbnails`).
+With `localLlm.provider == "claude"` the dashboard asks for no Gemini key, hides
+AI Shorts and the UGC Gallery (they need fal + ElevenLabs), and no longer
+requires an Upload-Post key to make clips (only to post).
 Claude takes no video file, so `get_visual_clips` sends it one frame every
 `VISION_FRAME_STEP` (3 s), labelled with its time, at most
 `VISION_FRAMES_PER_CALL` (100) per call: stretches of 300 s through the same

@@ -81,3 +81,24 @@ def test_editor_sends_frames_not_an_upload(claude, monkeypatch):
     assert seen["contents"][:4] == ["t=0s", b"j", "t=2s", b"k"]
     assert seen["schema"] is editor_mod.EditPlan and seen["model"] == claude_cli.VISION_MODEL
     assert out["edits"] and out["filter_string"]
+
+
+def test_thumbnails_are_the_frame_with_each_concepts_text(claude, monkeypatch, tmp_path):
+    thumbnail = pytest.importorskip("thumbnail")
+    from PIL import Image
+    monkeypatch.chdir(tmp_path)
+    frame = tmp_path / "frame.jpg"
+    Image.new("RGB", (1920, 1080), (30, 60, 90)).save(frame)
+    concepts = [{"text": "STOP HOURLY", "text_position": "left", "text_color": "yellow", "scene": "s", "why": "a"},
+                {"text": "", "text_position": "right", "text_color": "white", "scene": "s", "why": "b"}]
+    monkeypatch.setattr(thumbnail, "plan_thumbnail_concepts", lambda *a, **k: concepts)
+
+    out = thumbnail.generate_thumbnail(None, "title", "sess", count=2,
+                                       frame_reference={"path": str(frame)})
+
+    assert [t["text"] for t in out] == ["STOP HOURLY", ""]
+    for t in out:
+        img = Image.open(tmp_path / "output" / "thumbnails" / "sess" / t["url"].rsplit("/", 1)[1])
+        assert img.size == (1280, 720)
+    with pytest.raises(RuntimeError, match="Pick a frame"):
+        thumbnail.generate_thumbnail(None, "title", "sess", count=1)

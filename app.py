@@ -9902,7 +9902,7 @@ async def thumbnail_generate(
     not. frame: url of a frame from /api/thumbnail/frames to use as the
     person reference when no face photo is uploaded."""
     api_key = await resolve_gemini(request)
-    if not api_key:
+    if _model_missing(api_key):
         raise gemini_missing_error()
 
     # Image generation is the one expensive managed Gemini call — paid plans only.
@@ -9962,6 +9962,9 @@ async def thumbnail_generate(
                 text_hint = texts[titles.index(title)]
             if frame:
                 frame_reference = next((f for f in session.get("frames", []) if f["url"] == frame), None)
+            if frame_reference is None and not face_path and llm_backend.provider() == "claude":
+                # No image model to invent a scene: build on the video's first face frame.
+                frame_reference = next(iter(session.get("frames") or []), None)
 
         loop = asyncio.get_event_loop()
         thumbnails = await loop.run_in_executor(
