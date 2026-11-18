@@ -1,7 +1,7 @@
 """Unit tests for the manual generation controls (discussion #65): the
 clip-duration band helper and the prompt templates it feeds.
 
-Pure logic only — no API calls, no heavy imports (gemini_worker's templates are
+Pure logic only — no API calls, no heavy imports (llm_prompts's templates are
 read via ast so the ML stack never loads in CI).
 """
 import ast
@@ -46,10 +46,10 @@ class TestClipDurationBounds:
 
 
 def _templates():
-    """The prompt template constants, read without importing gemini_worker
+    """The prompt template constants, read without importing llm_prompts
     (which pulls google-genai — absent in the thin CI env)."""
     mod = ast.parse(open(os.path.join(os.path.dirname(__file__), "..",
-                                      "gemini_worker.py")).read())
+                                      "llm_prompts.py")).read())
     return {
         node.targets[0].id: node.value.value
         for node in mod.body

@@ -1,31 +1,10 @@
 """
-Pure helpers for the Gemini clip-selection pipeline.
+Pure helpers for the clip-selection pipeline.
 
-Standard-library only so both main.py and gemini_worker.py can import it and
+Standard-library only so both main.py and llm_prompts.py can import it and
 the logic stays unit-testable without the heavy video dependencies.
 """
 import math
-
-# USD per 1M tokens (input, output incl. thinking), from ai.google.dev pricing.
-MODEL_PRICES = {
-    "gemini-3.5-flash": (1.50, 9.00),
-    "gemini-3.1-flash-lite": (0.25, 1.50),
-    "gemini-3-flash-preview": (0.50, 3.00),
-    "gemini-2.5-flash-lite": (0.10, 0.40),
-    "gemini-2.5-flash": (0.30, 2.50),
-    "gemini-2.0-flash": (0.10, 0.40),  # deprecated (shut down 2026-06-01)
-}
-
-
-def lookup_model_prices(model_name):
-    """Longest-prefix match against MODEL_PRICES; None if unknown."""
-    name = str(model_name or "").lower()
-    best_key = None
-    for key in MODEL_PRICES:
-        if name.startswith(key) and (best_key is None or len(key) > len(best_key)):
-            best_key = key
-    return MODEL_PRICES[best_key] if best_key else None
-
 
 def clip_count_targets(n_windows):
     """How many clips to ask the detail pass for, given the shortlist size.

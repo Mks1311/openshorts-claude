@@ -11,7 +11,6 @@ from clip_selection import (
     shortlist_target,
     snap_clip_to_words,
     compact_words,
-    lookup_model_prices,
     trim_to_best,
     vision_segments,
 )
@@ -91,19 +90,6 @@ class TestSnapClipToWords:
         assert end - start <= 60.0
 
 
-class TestPricing:
-    def test_known_models(self):
-        assert lookup_model_prices("gemini-2.5-flash") == (0.30, 2.50)
-        assert lookup_model_prices("gemini-3-flash-preview") == (0.50, 3.00)
-
-    def test_prefix_match_with_suffix(self):
-        assert lookup_model_prices("gemini-2.5-flash-002") == (0.30, 2.50)
-
-    def test_unknown_model_returns_none(self):
-        assert lookup_model_prices("gpt-9-mega") is None
-        assert lookup_model_prices(None) is None
-
-
 class TestCompactWords:
     def test_rounds_timestamps(self):
         words = [{"w": " hi", "s": 17.240000000000002, "e": 17.899999999999999}]
@@ -158,7 +144,7 @@ class TestClipCountTargets:
 
 class TestDetailPromptCarriesTheCount:
     def test_template_formats_with_the_targets(self):
-        gw = pytest.importorskip("gemini_worker")
+        gw = pytest.importorskip("llm_prompts")
         low, high = clip_count_targets(5)
         prompt = gw.DETAIL_PROMPT_TEMPLATE.format(
             video_duration=300, language="es", min_clips=low, max_clips=high,

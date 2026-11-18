@@ -6,7 +6,7 @@ import PricingSection from './PricingSection';
 // source either way, so the plans have to earn their price on hardware, keys and
 // setup rather than on features. Timings are measured on our own pipeline: an
 // 8-minute input takes ~50s on the server GPU and 5-8 min on CPU.
-// The landing page carries its own shorter version of this (Landing.jsx "Two ways
+// (The retired landing page carried a shorter version of this: "Two ways
 // to use OpenShorts"); this detailed table is only for the standalone #/pricing.
 const HOSTED_VS_SELF = [
   {

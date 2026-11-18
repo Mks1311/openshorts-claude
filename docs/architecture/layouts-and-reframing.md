@@ -119,7 +119,7 @@ width, so an explicit GENERAL override on a portrait clip cannot shrink it.
   screen tutorial rendered GENERAL/TRACK, even when forced. Now each clip asks
   (`reframe_v2.screen_ranges` → `screencast_layout.detect_content_ranges`): one
   1024px still per shot, one Gemini call per clip, a closed choice per shot
-  (`screen` / `beside` / `camera`, `gemini_worker.SHOT_CONTENT_PROMPT`) plus the
+  (`screen` / `beside` / `camera`, `llm_prompts.SHOT_CONTENT_PROMPT`) plus the
   horizontal **reading area** of a screen. `camera` shots keep the face
   classifier's verdict. `beside` (width 0.7) stacks **only the content
   columns** (the side away from the presenter's body, `content_side`) over the

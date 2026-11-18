@@ -1,4 +1,4 @@
-"""Ask Gemini which layout a video needs, once per video.
+"""Ask Claude which layout a video needs, once per video.
 
 The four previous attempts at this problem asked the model (or a pixel
 heuristic) to MEASURE something — edge density, MSER text density, what fraction
@@ -20,11 +20,8 @@ the same video scored 1% and 97% coverage on consecutive runs. The variance was
 in asking for a continuous measurement, not in the model: a categorical choice
 between closed options is stable.
 
-It samples FRAMES instead of uploading the video. Gemini bills video at ~300
-tokens per second, so an hour of source is ~1.08M tokens — past a 1M context
-window before it starts — and means pushing a 1-2GB upload to get back one word.
-This pipeline ingests hour-long podcasts, so that scales badly in exactly the
-normal case. Twelve stills cost ~3k tokens whatever the source runs to.
+It samples FRAMES instead of sending the video: twelve stills cost a few
+thousand tokens whatever the source runs to.
 
 Measured on the same 48 clips (whole video vs sampled frames):
 
@@ -41,7 +38,6 @@ whole-video mode already has, at 2.2s per clip instead of ~15s.
 Off by default (``AUTO_LAYOUT=1``). A caller that already switched layouts on
 by hand wins: this only ever ADDS, so an explicit choice is never overridden.
 """
-import json
 import os
 
 # AUTO_LAYOUT=1 decides and applies. AUTO_LAYOUT=shadow decides, logs, and
@@ -192,43 +188,28 @@ def sample_frames(video_path, n=None, width=None):
 
 
 def pick(video_path, video_duration):
-    """The layout Gemini picks for this video, or "none" on any failure.
+    """The layout Claude picks for this video, or "none" on any failure.
 
     Never raises: a missing answer has to degrade to today's routing rather
     than break the job.
     """
     if not ENABLED:
         return "none"
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return "none"
+    import llm_backend
 
-    model_name = os.environ.get("GEMINI_MODEL") or 'gemini-3.1-flash-lite'
     print("🎛️  Choosing a layout for this video…")
     try:
         # Inside the try on purpose: the contract above is that this never
         # raises, and an unimportable SDK is just one more reason to fall back.
-        from google import genai
-        from google.genai import types as genai_types
-        import gemini_worker
+        import llm_prompts
 
         frames = sample_frames(video_path)
         if not frames:
             print("   ⚠️ No readable frames — keeping the default layout.")
             return "none"
 
-        client = genai.Client(api_key=api_key)
-        parts = [genai_types.Part.from_bytes(data=b, mime_type="image/jpeg")
-                 for b in frames]
-        response = client.models.generate_content(
-            model=model_name,
-            contents=parts + [gemini_worker.LAYOUT_CHOICE_PROMPT],
-            config=genai_types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=gemini_worker.LayoutChoice,
-            ))
-        gemini_worker.raise_if_blocked(response)
-        answer = json.loads(response.text) or {}
+        answer = llm_backend.ask_frames(
+            list(frames) + [llm_prompts.LAYOUT_CHOICE_PROMPT], llm_prompts.LayoutChoice)
     except Exception as e:
         print(f"   ⚠️ Layout choice failed ({e}) — keeping the default layout.")
         return "none"

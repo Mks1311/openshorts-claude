@@ -125,3 +125,29 @@ def read_at_path(video_path, cap, indices, max_forward=MAX_FORWARD):
               f"{done}/{len(indices)} read: {detail or 'no message'}), "
               f"reading the rest on the CPU")
         yield from read_at(cap, indices[done:], max_forward)
+
+
+def jpegs_every(video_path, start, end, step, width=512):
+    """``[(seconds from start, JPEG bytes)]``, one frame every ``step`` seconds
+    of ``[start, end]``, decoded in a single ffmpeg pass (any codec the system
+    ffmpeg reads, AV1 included). Empty on failure: callers fall back."""
+    import os
+    with tempfile.TemporaryDirectory(prefix="frames-") as d:
+        try:
+            subprocess.run(
+                ["ffmpeg", "-v", "error", "-ss", f"{start:.3f}", "-to", f"{end:.3f}",
+                 "-i", video_path, "-vf", f"fps=1/{step:g},scale={int(width)}:-2",
+                 "-q:v", "4", os.path.join(d, "%05d.jpg")],
+                capture_output=True, timeout=600, check=True)
+        except (OSError, subprocess.SubprocessError):
+            return []
+        out = []
+        for i, name in enumerate(sorted(os.listdir(d))):
+            with open(os.path.join(d, name), "rb") as f:
+                out.append((round(i * step, 3), f.read()))
+        return out
+
+
+def timed(frames):
+    """``jpegs_every`` frames as model contents: a ``t=12s`` label before each."""
+    return [part for t, jpg in frames for part in (f"t={t:g}s", jpg)]

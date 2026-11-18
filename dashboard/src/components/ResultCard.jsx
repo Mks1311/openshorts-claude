@@ -60,7 +60,7 @@ function formatDuration(clip) {
     return `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
 }
 
-export default function ResultCard({ clip, index, jobId, durable, uploadPostKey, uploadUserId, geminiApiKey, elevenLabsKey, isManaged, onPlay, onPause, onBulkSubtitle, clipCount = 1, bulkProgress, initialState = null, onStateChange, connectedPlatforms = null, onConnectSocials, onEditClip = null, onReframeClip = null, onModeChanged = null, onUpgrade = null }) {
+export default function ResultCard({ clip, index, jobId, durable, uploadPostKey, uploadUserId, elevenLabsKey, isManaged, onPlay, onPause, onBulkSubtitle, clipCount = 1, bulkProgress, initialState = null, onStateChange, connectedPlatforms = null, onConnectSocials, onEditClip = null, onReframeClip = null, onModeChanged = null, onUpgrade = null }) {
     const [showModal, setShowModal] = useState(false);
     // The "why" line is clamped to two lines so cards in a row stay level;
     // when it overflows, a hover (desktop) or tap (touch) shows the whole
@@ -382,21 +382,11 @@ export default function ResultCard({ clip, index, jobId, durable, uploadPostKey,
         setIsEditing(true);
         setEditError(null);
         try {
-            const apiKey = geminiApiKey || localStorage.getItem('gemini_key');
-
-            // Managed (paid) users get the Gemini key resolved server-side;
-            // only BYOK/self-host needs a local key.
-            if (!apiKey && !isManaged) {
-                throw new Error("Gemini API Key is missing. Please set it in Settings.");
-            }
-            const geminiHeaders = apiKey ? { 'X-Gemini-Key': apiKey } : {};
-
             // Try Remotion effects endpoint first
             const effectsRes = hasServerBurns ? null : await apiFetch('/api/effects/generate', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    ...geminiHeaders
                 },
                 body: JSON.stringify({
                     job_id: jobId,
@@ -428,7 +418,6 @@ export default function ResultCard({ clip, index, jobId, durable, uploadPostKey,
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    ...geminiHeaders
                 },
                 body: JSON.stringify({
                     job_id: jobId,

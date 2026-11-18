@@ -118,13 +118,6 @@ class TestDetectContentRanges:
         assert screencast_layout.detect_content_ranges(
             "x.mp4", scenes_of((0, 30)), 30.0) == []
 
-    def test_no_key_is_a_failure_not_an_empty_answer(self, monkeypatch):
-        monkeypatch.setattr(screencast_layout, "ENABLED", True)
-        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-        assert screencast_layout.detect_content_ranges(
-            "x.mp4", scenes_of((0, 30)), 30.0) is None
-
-
 class TestShotVerdicts:
     def test_parse_keeps_known_kinds_and_clamps_focus(self):
         raw = [{"shot": 0, "kind": "Screen", "focus_left": -0.2, "focus_right": 0.6},

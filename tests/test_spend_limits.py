@@ -300,7 +300,7 @@ def test_thumbnail_link_is_validated_in_self_host_too(dirs, monkeypatch):
 def titles(monkeypatch):
     calls = []
 
-    def _refine(api_key, context, message, conversation):
+    def _refine(context, message, conversation):
         calls.append(len(conversation))
         return {"titles": ["t"], "thumbnail_texts": []}
 
@@ -369,14 +369,13 @@ def test_description_prompt_is_bounded(monkeypatch):
     import thumbnail
     sent = {}
 
-    class _Models:
-        def generate_content(self, model, contents, **kw):
-            sent["prompt"] = contents if isinstance(contents, str) else str(contents)
-            return SimpleNamespace(text='{"description": "d"}')
+    def _ask(contents):
+        sent["prompt"] = "".join(contents)
+        return "d"
 
-    monkeypatch.setattr(thumbnail.genai, "Client", lambda api_key: SimpleNamespace(models=_Models()))
+    monkeypatch.setattr(thumbnail, "_ask_text", _ask)
     segs = [{"start": i, "end": i + 1, "text": "word " * 50} for i in range(2000)]
-    thumbnail.generate_youtube_description("k", "t", segs, "en", 2000, max_chars=5000)
+    thumbnail.generate_youtube_description("t", segs, "en", 2000, max_chars=5000)
     assert len(sent["prompt"]) < 5000 + 5000  # transcript capped; the rest is the template
 
 
@@ -473,17 +472,6 @@ def test_oauth_registration_is_rate_limited_per_ip(monkeypatch):
     codes = [c.post("/oauth/register", json=bad).status_code for _ in range(3)]
     assert codes == [400, 400, 429]
     assert c.post("/oauth/register", json=bad).json()["error"] == "slow_down"
-
-
-@pytest.mark.parametrize("body, field", [
-    ({"description": "x", "num_scripts": 500}, "num_scripts"),
-    ({"description": "x", "num_scripts": 0}, "num_scripts"),
-    ({"description": "x" * (config.SAAS_DESCRIPTION_MAX_CHARS + 1)}, "description"),
-])
-def test_saasshorts_inputs_are_bounded(body, field):
-    r = _call("post", "/api/saasshorts/analyze", json=body, headers={"X-Gemini-Key": "k"})
-    assert r.status_code in (400, 413)
-    assert field in r.json()["detail"]
 
 
 # --------------------------------------------------------------------------- #

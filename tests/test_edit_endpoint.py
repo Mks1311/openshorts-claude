@@ -57,10 +57,7 @@ def editor(monkeypatch):
     class Fake:
         writes = True
 
-        def __init__(self, api_key):
-            pass
-
-        def upload_video(self, path):
+        def sample_frames(self, path):
             assert os.path.exists(path)
             return object()
 

@@ -63,7 +63,7 @@ def _make_job(tmp_path, monkeypatch, served="mytitle_clip_1.mp4", **clip_extra):
 @pytest.fixture(autouse=True)
 def no_model(monkeypatch):
     """No test here talks to a model, whatever key the environment holds."""
-    monkeypatch.setattr(pro_mode, "_ask_model", lambda prompt, key: {"titles": []})
+    monkeypatch.setattr(pro_mode, "_ask_model", lambda prompt: {"titles": []})
 
 
 @pytest.fixture()

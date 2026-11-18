@@ -14,7 +14,7 @@
   through one managed Upload-Post account, one `os_<hex>` profile per user,
   created only by `/api/social/connect` (reads never create it). Capped at
   `SOCIAL_POSTS_PER_HOUR` per user and `SOCIAL_POSTS_PER_DAY_FREE` on the free
-  plan (429 with the reason); thumbnail and SaaSShorts publishing count too.
+  plan (429 with the reason); thumbnail publishing counts too.
 - `POST /mcp`: MCP server (JSON-RPC), the pipeline as agent tools.
 - `POST/GET/DELETE /api/keys`: user API keys (cloud mode, session JWT only).
 - `DELETE /api/account`: erase the account and everything in it (GDPR art. 17).
@@ -102,7 +102,7 @@ Cloud mode serves a job's files only to a request that has a path signature
 (`?exp=&sig=`, 24 h, `MEDIA_URL_TTL_SECONDS`), the owner's media token (`?mt=`
 or the `os_media` HttpOnly cookie, both from `POST /api/media-token`, 12 h) or
 the owner's own `Authorization` / `X-API-Key`. Owner: live job record, the
-`.owner` sidecar (clip, SaaSShorts and thumbnail directories all write one),
+`.owner` sidecar (clip and thumbnail directories both write one),
 then the `projects` row. Everything handed outside the dashboard is signed:
 MCP `video_url` / `download_url`, webhook `video_url`, and a per-clip
 `download_url` in `GET /api/status`. The dashboard appends `mt` in

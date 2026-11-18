@@ -18,10 +18,9 @@ FPS = 30.0
 @pytest.fixture(autouse=True)
 def no_model(monkeypatch):
     """No test here talks to a model, whatever key the environment holds."""
-    def refuse(prompt, api_key):
+    def refuse(prompt):
         raise AssertionError("a test reached the model")
     monkeypatch.setattr(pro_mode, "_ask_model", refuse)
-    monkeypatch.delenv("LLM_BASE_URL", raising=False)
 
 
 def _words(*spans):
@@ -279,23 +278,23 @@ class TestTitles:
             {"t": 0.3, "text": "CHAMPION"}, {"t": 4.0, "text": "AÑOS"},
             {"t": 9.0, "text": "MINDSET"}]
 
-    def test_no_key_no_titles_and_no_call(self):
-        assert pro_mode.pick_titles(WORDS, "a title", api_key=None) == []
+    def test_no_words_no_titles_and_no_call(self):
+        assert pro_mode.pick_titles([], "a title") == []
 
     def test_a_model_failure_is_a_clip_without_titles(self, monkeypatch):
-        def broken(prompt, api_key):
+        def broken(prompt):
             raise RuntimeError("quota")
         monkeypatch.setattr(pro_mode, "_ask_model", broken)
-        assert pro_mode.pick_titles(WORDS, "a title", api_key="k") == []
+        assert pro_mode.pick_titles(WORDS, "a title") == []
 
     def test_the_model_sees_the_words_with_their_index(self, monkeypatch):
         seen = {}
 
-        def answer(prompt, api_key):
+        def answer(prompt):
             seen["prompt"] = prompt
             return {"titles": [{"word_index": 4, "text": "MINDSET"}]}
         monkeypatch.setattr(pro_mode, "_ask_model", answer)
-        assert pro_mode.pick_titles(WORDS, "My clip", api_key="k") == [
+        assert pro_mode.pick_titles(WORDS, "My clip") == [
             {"t": 9.0, "text": "MINDSET"}]
         assert "4|9.00|mindset" in seen["prompt"] and "My clip" in seen["prompt"]
 
@@ -350,7 +349,7 @@ class TestConvertExtras:
             return {"keep": [[0.0, 30.0]], "duration": 30.0, "shots": 1, "framed": 1,
                     "titles": [t["text"] for t in kw.get("titles") or []]}
         monkeypatch.setattr(pro_mode, "run", fake_run)
-        monkeypatch.setattr(pro_mode, "_ask_model", lambda prompt, key: {
+        monkeypatch.setattr(pro_mode, "_ask_model", lambda prompt: {
             "titles": [{"word_index": 1, "text": "WORLD"}]})
         return calls
 
@@ -362,7 +361,7 @@ class TestConvertExtras:
     def test_titles_and_the_hook_time_reach_the_render(self, tmp_path, rendered):
         base, clip = self._clip(tmp_path)
         _name, updates = pro_mode.convert(base, "t_clip_1.mp4", clip, TRANSCRIPT,
-                                          api_key="k", hook_seconds=5.0)
+                                          hook_seconds=5.0)
         assert rendered[0]["titles"] == [{"t": 10.0, "text": "WORLD"}]
         assert rendered[0]["hook_seconds"] == 5.0
         assert updates["pro_titles"] == ["WORLD"]

@@ -119,7 +119,7 @@ utility). Radii: `--radius-card: 10px` (rounded-card), `--radius-input: 8px`
   Active state = brass hairline + paper3 fill + ink text. Never bg-white
   text-black, never per-feature colors.
 - `<StepIndicator>` from `src/components/ui/StepIndicator.jsx` — the single
-  wizard stepper (ThumbnailStudio + SaaShortsTab share it). Mono ordinals.
+  wizard stepper (ThumbnailStudio). Mono ordinals.
 - `.input-field` — inset bg-paper, hairline, focus brass ring (redefined in
   index.css; existing class name kept).
 - `.readout` — mono UPPERCASE value chip for machine data (timecodes, costs,

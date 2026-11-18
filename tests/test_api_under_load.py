@@ -1,13 +1,10 @@
 """What keeps the API answering when the host is short of CPU (16-nov):
 the owner check of a status poll skips the full user load, the DB pool has
-room and a short wait, and a source sent to the remote worker keeps its lease
-alive for the whole transfer."""
+room and a short wait."""
 import asyncio
-import os
 import time
 
 import app as app_module
-import remote_worker as rw
 from cloud import database, owner_cache
 
 
@@ -120,49 +117,6 @@ def test_postgres_pool_has_room_and_a_short_wait(monkeypatch):
     assert database._pool_options("sqlite+aiosqlite:///:memory:") == {}
 
 
-def test_sending_the_source_keeps_the_lease_alive(tmp_path, monkeypatch):
-    src = tmp_path / "V.mp4"
-    src.write_bytes(b"x" * (3 * 1024 + 5))
-    monkeypatch.setattr(app_module, "SOURCE_CHUNK", 1024)
-    monkeypatch.setattr(app_module, "SOURCE_SEEN_EVERY", 0)
-    old = time.time() - 600
-    rw.touch_seen(str(tmp_path))
-    os.utime(os.path.join(tmp_path, rw.SEEN_FILE), (old, old))
-    touches = []
-    real_touch = rw.touch_seen
-    monkeypatch.setattr(app_module.remote_worker, "touch_seen",
-                        lambda d: (touches.append(d), real_touch(d)))
-    body = b"".join(app_module._source_chunks(str(src), str(tmp_path)))
-    assert body == src.read_bytes()
-    assert len(touches) >= 3
-    assert time.time() - rw.last_seen(str(tmp_path)) < 60
-
-
-def test_quiet_minutes_wrap_around_the_hour():
-    assert app_module._quiet_minutes("55-5") == set(range(55, 60)) | set(range(0, 6))
-    assert app_module._quiet_minutes("28-32, 7") == {28, 29, 30, 31, 32, 7}
-    assert app_module._quiet_minutes("") == set()
-    assert app_module._quiet_minutes("x-y") == set()
-
-
-def test_no_claim_in_a_quiet_minute(monkeypatch):
-    monkeypatch.setattr(app_module, "REMOTE_WORKER_TOKEN", "t" * 40)
-    monkeypatch.setattr(app_module, "REMOTE_WORKER_SLOTS", 4)
-    monkeypatch.setattr(app_module, "_admitting", {"waiting"})
-    monkeypatch.setattr(app_module, "REMOTE_QUIET_MINUTES", set(range(60)))
-    assert app_module._claim_remote_job("w1") is None
-
-
-def test_the_source_transfer_can_be_capped(tmp_path, monkeypatch):
-    src = tmp_path / "V.mp4"
-    src.write_bytes(b"x" * 250_000)
-    monkeypatch.setattr(app_module, "SOURCE_CHUNK", 50_000)
-    monkeypatch.setattr(app_module, "REMOTE_SOURCE_MBPS", 10)   # 250 kB = 0.2 s
-    t = time.time()
-    assert len(b"".join(app_module._source_chunks(str(src), str(tmp_path)))) == 250_000
-    assert time.time() - t >= 0.15
-
-
 def test_a_child_probe_brings_back_what_it_learned(monkeypatch):
     from cloud import metering
     from yt_clients import NotASingleVideo
@@ -207,10 +161,3 @@ def test_the_probe_runs_in_a_pool_process(monkeypatch):
             metering._probe_pool.shutdown(wait=True)
         metering._probe_pool = None
 
-
-def test_the_source_cap_is_shared_by_every_transfer(monkeypatch):
-    monkeypatch.setattr(app_module, "REMOTE_SOURCE_MBPS", 8)      # 1 MB/s
-    monkeypatch.setattr(app_module, "_source_bucket", {"free_at": 0.0})
-    first = app_module._source_turn(500_000)
-    second = app_module._source_turn(500_000)                    # another transfer
-    assert 0.4 < first <= 0.5 and 0.9 < second <= 1.0
