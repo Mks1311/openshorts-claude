@@ -66,7 +66,7 @@
                 background-color var(--dur-short) var(--ease-out);
   }
   .card-hover:hover {
-    transform: translateY(-4px);
+    transform: translateY(-2px);
     border-color: var(--color-rule-2);
   }
 
@@ -109,8 +109,8 @@
     border-radius: 999px;
     transition: filter var(--dur-short) var(--ease-out), transform var(--dur-short) var(--ease-out);
   }
-  .btn-primary:hover { filter: brightness(1.08); }
-  .btn-primary:active { transform: translateY(1px); }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
+  .btn-primary:active:not(:disabled) { transform: translateY(0) scale(0.985); }
   .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 
   .btn-ghost {
@@ -120,8 +120,9 @@
     border-radius: 999px;
     transition: border-color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
   }
-  .btn-ghost:hover { border-color: var(--color-accent); }
-  .btn-ghost:active { transform: translateY(1px); }
+  .btn-ghost { transition: border-color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out), transform var(--dur-short) var(--ease-out); }
+  .btn-ghost:hover:not(:disabled) { border-color: var(--color-accent); transform: translateY(-1px); }
+  .btn-ghost:active:not(:disabled) { transform: translateY(0) scale(0.985); }
   .btn-ghost:disabled { opacity: 0.45; cursor: not-allowed; }
 
   .btn-quiet {
@@ -130,7 +131,42 @@
     border-radius: 999px;
     transition: filter var(--dur-short) var(--ease-out);
   }
-  .btn-quiet:hover { filter: brightness(1.15); }
+  .btn-quiet { transition: filter var(--dur-short) var(--ease-out), transform var(--dur-short) var(--ease-out); }
+  .btn-quiet:hover:not(:disabled) { filter: brightness(1.18); transform: translateY(-1px); }
+  .btn-quiet:active:not(:disabled) { transform: translateY(0) scale(0.985); }
+  .btn-quiet:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  /* small toggle pill: agent clients, source switch */
+  .chip {
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 text-xs lowercase text-muted;
+    border: 1px solid var(--color-rule);
+    border-radius: 999px;
+    transition: color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out), background-color var(--dur-short) var(--ease-out);
+  }
+  .chip:hover { color: var(--color-ink-2); border-color: var(--color-rule-2); }
+  .chip-on, .chip-on:hover {
+    color: var(--color-ink);
+    border-color: color-mix(in oklab, var(--color-accent) 70%, transparent);
+    background: color-mix(in oklab, var(--color-accent) 10%, transparent);
+  }
+
+  /* a settings / panel row: hairline-separated sections inside one card */
+  .panel-section + .panel-section { border-top: 1px solid var(--color-rule); }
+
+  /* live status dot */
+  .dot { width: 7px; height: 7px; border-radius: 999px; display: inline-block; flex-shrink: 0; }
+  .dot-ok { background: var(--color-ok); box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-ok) 18%, transparent); }
+  .dot-off { background: var(--color-danger); }
+  .dot-wait { background: var(--color-muted); }
+
+  /* pipeline: steps joined by a hairline with a pulse running along it */
+  .flow-line { position: relative; overflow: hidden; background: var(--color-rule-2); }
+  .flow-line::after {
+    content: ''; position: absolute; left: 0; width: 100%; height: 36%;
+    background: linear-gradient(to bottom, transparent, var(--color-accent), transparent);
+    animation: flow-pulse 3.2s var(--ease-out) infinite;
+    animation-delay: var(--flow-delay, 0s);
+  }
 
   .btn-danger {
     @apply inline-flex items-center justify-center gap-2 px-4 py-2 text-sm lowercase;
@@ -250,6 +286,12 @@
   100% {
     top: 100%;
   }
+}
+
+@keyframes flow-pulse {
+  0% { top: -40%; opacity: 0; }
+  20% { opacity: 1; }
+  100% { top: 110%; opacity: 0; }
 }
 
 @keyframes filament-pulse {
