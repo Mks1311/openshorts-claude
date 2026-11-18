@@ -6,7 +6,6 @@ reason reaches Stripe in its own vocabulary, the free text never reaches the
 Telegram alert, and the UI offers exactly the reasons the server accepts.
 """
 import asyncio
-import os
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -16,7 +15,6 @@ from fastapi import HTTPException
 
 from cloud import alerts, cancellation
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class _Result:
@@ -281,11 +279,6 @@ class TestPause:
             asyncio.run(cancellation.unpause_subscription(request=None))
         assert e.value.status_code == 409
 
-    def test_the_ui_knows_the_pause_reasons(self):
-        modal = open(os.path.join(REPO, "dashboard/src/components/CancelPlanModal.jsx")).read()
-        assert "pause_reasons" in modal and "/api/billing/pause" in modal
-
-
 class TestHoldStatus:
     def _sub(self, start, **meta):
         return {"status": "active", "metadata": {k: str(v) for k, v in meta.items()}}
@@ -329,8 +322,3 @@ class TestReasons:
         stripe_enum = {"customer_service", "low_quality", "missing_features", "other",
                        "switched_service", "too_complex", "too_expensive", "unused"}
         assert set(cancellation.CANCEL_REASONS.values()) <= stripe_enum
-
-    def test_the_ui_offers_exactly_the_reasons_the_server_accepts(self):
-        modal = open(os.path.join(REPO, "dashboard/src/components/CancelPlanModal.jsx")).read()
-        for value in cancellation.CANCEL_REASONS:
-            assert f"'{value}'" in modal, f"{value} is accepted but never offered"

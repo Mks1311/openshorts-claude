@@ -70,7 +70,7 @@ function detectTimezone() {
     }
 }
 
-export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, uploadPostKey, uploadUserId, isManaged }) {
+export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, uploadPostKey, uploadUserId }) {
     const [time, setTime] = useState('12:00');
     const [timezone, setTimezone] = useState(detectTimezone);
     const [platforms, setPlatforms] = useState(defaultPlatformFlags);
@@ -105,8 +105,7 @@ export default function ScheduleWeekModal({ isOpen, onClose, clips, jobId, uploa
 
     const selectedPlatforms = Object.keys(platforms).filter(k => platforms[k]);
 
-    // Managed (cloud plan/trial) users post with the server-side key — no BYOK needed
-    const canPost = isManaged || (uploadPostKey && uploadUserId);
+    const canPost = Boolean(uploadPostKey && uploadUserId);
 
     const handleScheduleAll = async () => {
         if (!canPost) return;

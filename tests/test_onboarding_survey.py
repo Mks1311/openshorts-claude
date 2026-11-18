@@ -1,6 +1,5 @@
 """Sign-up survey (cloud/onboarding.py): who gets asked, what is accepted, and
 that the dashboard offers exactly the answers the server accepts."""
-import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -8,7 +7,6 @@ from fastapi import HTTPException
 
 from cloud import onboarding
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 class TestWhoIsAsked:
@@ -43,10 +41,3 @@ class TestValidation:
             onboarding._validate(onboarding.SurveyAnswer(**kw))
         assert e.value.status_code == 422
 
-
-class TestUiMatchesServer:
-    @pytest.mark.parametrize("values", [onboarding.SOURCES, onboarding.GOALS, onboarding.ROLES])
-    def test_every_accepted_value_is_offered(self, values):
-        ui = open(os.path.join(REPO, "dashboard/src/components/OnboardingSurvey.jsx")).read()
-        for value in values:
-            assert f"'{value}'" in ui, f"{value} is accepted but never offered"

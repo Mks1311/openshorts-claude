@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Upload, Image, Loader2, Send, Check, Download, ArrowRight, ArrowLeft, Sparkles, Video, Type, X, Plus, MessageSquare, FileText, Youtube, AlertCircle, Settings } from 'lucide-react';
 import { getApiUrl } from '../config';
-import { apiFetch, QuotaError, openQuotaWall } from '../lib/api';
+import { apiFetch } from '../lib/api';
 import StepIndicator from './ui/StepIndicator';
 import SegmentedControl from './ui/SegmentedControl';
 
@@ -79,7 +79,7 @@ function DragDropZone({ label, accept, onFile, file, onClear, icon }) {
   );
 }
 
-export default function ThumbnailStudio({ uploadPostKey, uploadUserId, managed = false, onCreateClips = null }) {
+export default function ThumbnailStudio({ uploadPostKey, uploadUserId, onCreateClips = null }) {
   // Step management
   const [step, setStep] = useState(0);
   const [mode, setMode] = useState(null); // 'video' or 'manual'
@@ -189,7 +189,6 @@ export default function ThumbnailStudio({ uploadPostKey, uploadUserId, managed =
       }]);
       setStep(1);
     } catch (e) {
-      if (e instanceof QuotaError) { openQuotaWall(e, 'thumbnails'); return; }
       alert(`Analysis failed: ${e.message}`);
     } finally {
       setIsAnalyzing(false);
@@ -253,10 +252,9 @@ export default function ThumbnailStudio({ uploadPostKey, uploadUserId, managed =
       }]);
       setTimeout(scrollToBottom, 100);
     } catch (e) {
-      if (e instanceof QuotaError) openQuotaWall(e, 'thumbnails');
       setChatHistory(prev => [...prev, {
         role: 'assistant',
-        content: `Failed to refine: ${e instanceof QuotaError ? 'no minutes left' : e.message}`
+        content: `Failed to refine: ${e.message}`
       }]);
     } finally {
       setIsRefining(false);
@@ -298,7 +296,6 @@ export default function ThumbnailStudio({ uploadPostKey, uploadUserId, managed =
       }
       setGeneratedThumbnails(data.thumbnails);
     } catch (e) {
-      if (e instanceof QuotaError) { openQuotaWall(e, 'thumbnails'); return; }
       alert(`Generation failed: ${e.message}`);
     } finally {
       setIsGenerating(false);
@@ -373,7 +370,7 @@ export default function ThumbnailStudio({ uploadPostKey, uploadUserId, managed =
 
   // --- Publish to YouTube ---
   const handlePublish = async () => {
-    if (!managed && (!uploadPostKey || !uploadUserId)) return alert('Please configure your Upload-Post API key and user in Settings first.');
+    if (!uploadPostKey || !uploadUserId) return alert('Please configure your Upload-Post API key and user in Settings first.');
     const finalTitle = selectedTitle || manualTitle;
     if (!finalTitle) return alert('No title selected.');
     if (!selectedThumbnail) return alert('Please select a thumbnail first.');
@@ -463,26 +460,22 @@ export default function ThumbnailStudio({ uploadPostKey, uploadUserId, managed =
   };
 
   return (
-    <div className="h-full overflow-y-auto custom-scrollbar p-4 sm:p-6 md:p-8 animate-fade">
-      <div className="max-w-5xl mx-auto">
-        {/* Header */}
-        <div className="flex items-end justify-between mb-2">
+    <div className="h-full overflow-y-auto custom-scrollbar animate-fade">
+      <div className="max-w-5xl mx-auto px-4 py-6 sm:px-8 sm:py-8 lg:py-10">
+        <div className="flex flex-wrap items-end justify-between gap-3 mb-8">
           <div>
-            <p className="eyebrow mb-2">06 · YOUTUBE STUDIO</p>
-            <h1 className="font-display lowercase text-2xl text-ink flex items-center gap-3">
-              <span className="w-10 h-10 rounded-card bg-paper3 flex items-center justify-center">
-                <Image size={18} className="text-brass" />
-              </span>
-              YouTube Studio
-            </h1>
+            <h2 className="font-display lowercase text-[2.1rem] sm:text-[2.9rem] leading-[1.02] text-ink">package a video for youtube</h2>
+            <p className="text-muted text-[15px] sm:text-base leading-relaxed mt-3 max-w-xl">
+              Claude reads your video and writes titles, a description with chapters and thumbnail
+              text set on your own frame or photo. Publish it from here, or cut shorts from the same upload.
+            </p>
           </div>
           {step > 0 && (
-            <button onClick={handleReset} className="text-xs lowercase text-muted hover:text-ink transition-colors flex items-center gap-1">
-              <Plus size={12} /> New Project
+            <button onClick={handleReset} className="btn-ghost px-3.5 py-1.5 text-xs">
+              <Plus size={14} /> new video
             </button>
           )}
         </div>
-        <p className="text-sm lowercase text-muted mb-6">Generate viral titles, AI thumbnails, descriptions and publish directly to YouTube</p>
 
         <div className="mb-8">
           <StepIndicator steps={STEPS} current={step} />
@@ -1121,7 +1114,7 @@ export default function ThumbnailStudio({ uploadPostKey, uploadUserId, managed =
               </div>
 
               {/* Publish Button */}
-              {(!managed && (!uploadPostKey || !uploadUserId)) ? (
+              {(!uploadPostKey || !uploadUserId) ? (
                 <div className="glass-panel p-6 space-y-3">
                   <div className="flex items-center gap-2 text-warn">
                     <AlertCircle size={16} />

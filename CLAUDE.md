@@ -33,7 +33,7 @@ Ingest (yt-dlp or upload) → transcription (word timestamps) → scene detectio
 - `editor.py` (Claude edit plans → FFmpeg effects), `pro_mode.py` (talking-head re-edit), `hooks.py` (hook overlays), `subtitles.py` (SRT/ASS, burning), `translate.py` (ElevenLabs dubbing), `thumbnail.py`.
 - `mcp_server.py`, `mcp_stdio.py`: MCP over HTTP and stdio.
 - `cloud/`: auth, API keys, metering, billing, lifecycle emails, account erasure, autopilot, proxy ledger, alerts, queue watch.
-- `dashboard/src/App.jsx`: main React component; `dashboard/src/main.jsx` routes the hash (a bare `/` is the app).
+- `dashboard/src/App.jsx`: the whole dashboard (Clips, YouTube Studio, Settings); `lib/serverConfig.js` reads `/api/config`. The billing, sign-in and account screens were removed from the UI; their backend (`cloud/`) stays dormant while `BILLING_ENABLED` is off.
 
 ## Subsystem reference (read before touching)
 

@@ -3,13 +3,11 @@
 A job sent with an osk_ key (REST, MCP, OAuth clients) is followed by polling
 or the webhook, so mailing its owner on every run is noise."""
 import asyncio
-import os
 import sys
 from types import SimpleNamespace
 
 import app
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _req(headers):
@@ -70,20 +68,3 @@ def test_email_button_opens_history(monkeypatch):
     assert len(sent) == 1 and sent[0]["count"] == 6
     assert sent[0]["url"] == "https://app.example/#app?tab=history"
 
-
-def test_history_deep_link_survives_sign_in():
-    """The dashboard side of the same link: signed out, History asks to sign in
-    and the sign-in comes back to History, not to the generator/tutorial."""
-    def read(path):
-        with open(os.path.join(REPO, "dashboard/src", path)) as f:
-            return f.read()
-
-    app_jsx = read("App.jsx")
-    auth = read("contexts/AuthContext.jsx")
-    lib = read("lib/tabAfterLogin.js")
-    assert "'history'" in app_jsx.split("const DEEP_LINK_TABS", 1)[1].split("\n", 1)[0]
-    assert "rememberTabAfterLogin(activeTab)" in app_jsx
-    assert "'history'" in lib.split("const TABS", 1)[1].split("\n", 1)[0]
-    assert "takeTabAfterLogin()" in auth
-    assert "#app?tab=${afterLoginTab}" in auth
-    assert "!afterLoginTab" in auth  # no first-run tutorial on top of History

@@ -2784,7 +2784,7 @@ if __name__ == '__main__':
         early_clips = (early_state or {}).get("clips") if early_state else None
         if (transcript is not None and early_clips
                 and transcript is early_state["transcript"]):
-            print("♻️ Using the clips Gemini picked while the video downloaded.")
+            print("♻️ Using the clips Claude picked while the video downloaded.")
             clips_data = early_clips
         elif transcript is not None:
             clips_data = get_viral_clips(transcript, duration, viewer_clips=viewer_clips)
