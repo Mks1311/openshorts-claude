@@ -2470,6 +2470,12 @@ def speech_is_sparse(transcript, duration):
 # are merged by score. VISION_MAX_SEGMENTS bounds the spend of one job.
 VISION_SEGMENT_SECONDS = float(os.environ.get("VISION_SEGMENT_SECONDS", "2400"))
 VISION_MAX_SEGMENTS = int(os.environ.get("VISION_MAX_SEGMENTS", "8"))
+# Claude sees frames, not video: one every VISION_FRAME_STEP s, at most
+# VISION_FRAMES_PER_CALL per call (the API's per-request image cap), so a
+# stretch is 300 s. shortcut: with VISION_MAX_SEGMENTS=8 that covers the first
+# 40 min of a silent source; raise VISION_MAX_SEGMENTS for longer ones.
+VISION_FRAME_STEP = 3.0
+VISION_FRAMES_PER_CALL = 100
 
 
 def _vision_proxy(video_path, start, end, out_path):
@@ -2528,6 +2534,43 @@ def _viewer_hint(viewer_clips, offset, duration):
             "but still judge what you see and keep the time contract.\n")
 
 
+def _clamp_shorts(shorts, duration):
+    """Picks clamped to ``[0, duration]``; drops any shorter than a second."""
+    clean = []
+    for s in shorts or []:
+        s["start"] = max(0.0, float(s.get("start", 0)))
+        s["end"] = min(float(duration), float(s.get("end", 0)))
+        if s["end"] - s["start"] >= 1.0:
+            clean.append(s)
+    return clean
+
+
+def _visual_pass_frames(model_name, video_path, s0, s1, language,
+                        min_clips, max_clips, min_secs, max_secs, hint=""):
+    """The Claude version of ``_visual_pass``: timestamped frames of
+    ``[s0, s1]`` of the source instead of an uploaded video. Returns
+    ``(shorts, cost)`` in that stretch's own seconds, ``(None, None)`` when no
+    frame could be read."""
+    import claude_cli
+    import frame_sampler
+
+    frames = frame_sampler.jpegs_every(video_path, s0, s1, VISION_FRAME_STEP)
+    if not frames:
+        print("❌ Could not read frames for the vision pass.")
+        return None, None
+    duration = round(s1 - s0, 3)
+    prompt = (f"The video is given as {len(frames)} frames, one every {VISION_FRAME_STEP:g} s, "
+              f"each labelled with its time in seconds from the start of this video. "
+              f"There is no audio: judge by what you see, and place cuts between the "
+              f"labelled times." + gemini_worker.VISUAL_PROMPT_TEMPLATE.format(
+                  video_duration=duration, language=language,
+                  min_clips=min_clips, max_clips=max_clips,
+                  min_secs=min_secs, max_secs=max_secs) + (hint or ""))
+    parsed, cost = claude_cli.ask(frame_sampler.timed(frames) + [prompt],
+                                  gemini_worker.VisualResponse, model=model_name)
+    return _clamp_shorts(parsed.get("shorts"), duration), cost
+
+
 def _visual_pass(client, model_name, video_path, duration, language,
                  min_clips, max_clips, min_secs, max_secs, hint=""):
     """One vision call over one file. Returns ``(shorts, cost)``; ``shorts``
@@ -2562,13 +2605,8 @@ def _visual_pass(client, model_name, video_path, duration, language,
             model=model_name, contents=[file_upload, prompt], config=config)
         gemini_worker.raise_if_blocked(response)
         parsed = json.loads(response.text)
-        clean = []
-        for s in parsed.get("shorts") or []:
-            s["start"] = max(0.0, float(s.get("start", 0)))
-            s["end"] = min(float(duration), float(s.get("end", 0)))
-            if s["end"] - s["start"] >= 1.0:
-                clean.append(s)
-        return clean, gemini_worker._calculate_cost_analysis(response, model_name)
+        return (_clamp_shorts(parsed.get("shorts"), duration),
+                gemini_worker._calculate_cost_analysis(response, model_name))
     finally:
         if file_upload is not None:
             try:
@@ -2589,18 +2627,22 @@ def get_visual_clips(video_path, video_duration, language="en", viewer_clips=Non
     stretch (``vision_segments``), and the picks are merged, de-overlapped
     and cut to the best ``CLIP_TARGET_MAX`` by score: a silent multi-hour
     console capture used to fail at the model."""
-    print("🎥  Silent video — analyzing with Gemini vision (no transcript)...")
+    print("🎥  Silent video — analyzing by vision (no transcript)...")
+    use_claude = llm_backend.provider() == "claude"
     api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
+    if use_claude:
+        client, model_name = None, llm_backend.model_name()
+    elif not api_key:
         if llm_backend.active():
             print("❌ This video has no usable speech, so it has to be clipped by "
-                  "watching it, and that needs Gemini (a text-only LLM server "
-                  "cannot see the footage). Add a GEMINI_API_KEY for silent videos.")
+                  "watching it, and a text-only LLM server cannot see the footage. "
+                  "Use LLM_PROVIDER=claude or add a GEMINI_API_KEY for silent videos.")
         else:
             print("❌ Error: GEMINI_API_KEY not found.")
         return None
-    client = genai.Client(api_key=api_key)
-    model_name = os.environ.get("GEMINI_MODEL") or 'gemini-3.1-flash-lite'
+    else:
+        client = genai.Client(api_key=api_key)
+        model_name = os.environ.get("GEMINI_MODEL") or 'gemini-3.1-flash-lite'
 
     # The vision path has no scoring windows to derive a count from, so the
     # env targets (user request) apply directly over the classic 3-15.
@@ -2613,11 +2655,15 @@ def get_visual_clips(video_path, video_duration, language="en", viewer_clips=Non
     v_max_clips = max(v_min_clips, _env_int("CLIP_TARGET_MAX", 15))
     v_min_secs, v_max_secs = clip_duration_bounds()
 
-    segments = vision_segments(video_duration, VISION_SEGMENT_SECONDS, VISION_MAX_SEGMENTS)
+    segment_seconds = (VISION_FRAME_STEP * VISION_FRAMES_PER_CALL if use_claude
+                       else VISION_SEGMENT_SECONDS)
+    segments = vision_segments(video_duration, segment_seconds, VISION_MAX_SEGMENTS)
     try:
         covered = segments[-1][1]
         if len(segments) == 1:
-            print(f"🎥  Model: {model_name} | watching a 360p/1 fps proxy of "
+            seen = (f"a frame every {VISION_FRAME_STEP:g} s" if use_claude
+                    else "a 360p/1 fps proxy")
+            print(f"🎥  Model: {model_name} | watching {seen} of "
                   f"{os.path.basename(video_path)}")
         else:
             print(f"🎥  Model: {model_name} | {len(segments)} stretches of "
@@ -2634,11 +2680,16 @@ def get_visual_clips(video_path, video_duration, language="en", viewer_clips=Non
             for i, (s0, s1) in enumerate(segments):
                 proxy = os.path.join(tmp_dir, f"part{i}.mp4")
                 try:
-                    _vision_proxy(video_path, s0, s1, proxy)
-                    shorts, cost = _visual_pass(
-                        client, model_name, proxy, round(s1 - s0, 3), language,
-                        per_min, v_max_clips, v_min_secs, v_max_secs,
-                        hint=_viewer_hint(viewer_clips, s0, s1 - s0))
+                    hint = _viewer_hint(viewer_clips, s0, s1 - s0)
+                    if use_claude:
+                        shorts, cost = _visual_pass_frames(
+                            model_name, video_path, s0, s1, language,
+                            per_min, v_max_clips, v_min_secs, v_max_secs, hint=hint)
+                    else:
+                        _vision_proxy(video_path, s0, s1, proxy)
+                        shorts, cost = _visual_pass(
+                            client, model_name, proxy, round(s1 - s0, 3), language,
+                            per_min, v_max_clips, v_min_secs, v_max_secs, hint=hint)
                 except gemini_worker.GeminiBlockedError:
                     raise
                 except Exception as e:
@@ -2673,7 +2724,7 @@ def get_visual_clips(video_path, video_duration, language="en", viewer_clips=Non
         print(f"🚫 {e}")
         raise
     except Exception as e:
-        print(f"❌ Gemini vision error: {e}")
+        print(f"❌ Vision error: {e}")
         return None
 
 if __name__ == '__main__':

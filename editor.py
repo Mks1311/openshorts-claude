@@ -25,17 +25,40 @@ class EditPlan(BaseModel):
     edits: List[EditDecision]
 
 
+# With Claude the editor sees frames, not video: one every EDIT_FRAME_STEP s
+# (a clip is 15-90 s, so 8-45 frames) next to the word-timed transcript.
+EDIT_FRAME_STEP = 2.0
+
+
 class VideoEditor:
     def __init__(self, api_key):
-        self.client = genai.Client(api_key=api_key)
+        import llm_backend
+        # client None = Claude (LLM_PROVIDER=claude) through the headless CLI.
+        self.client = None if llm_backend.provider() == "claude" else genai.Client(api_key=api_key)
         self.model_name = (
             os.environ.get("GEMINI_MODEL_EDITOR")
             or os.environ.get("GEMINI_MODEL")
             or "gemini-3.1-flash-lite"
         )
 
+    def _ask_claude(self, frames, prompt, schema):
+        """Timestamped frames + prompt to Claude: the parsed dict with a schema, else the text."""
+        import claude_cli
+        import frame_sampler
+        return claude_cli.ask(frame_sampler.timed(frames) + [prompt], schema,
+                              model=claude_cli.VISION_MODEL)[0]
+
     def upload_video(self, video_path):
-        """Uploads video to Gemini File API."""
+        """Uploads video to Gemini File API. With Claude, samples timestamped
+        frames instead: nothing leaves the machine but those frames."""
+        if self.client is None:
+            import frame_sampler
+            if not os.path.exists(video_path):
+                raise FileNotFoundError(f"Video file not found: {video_path}")
+            frames = frame_sampler.jpegs_every(video_path, 0, 24 * 3600, EDIT_FRAME_STEP)
+            if not frames:
+                raise RuntimeError(f"Could not read frames from {video_path}")
+            return frames
         print(f"📤 Uploading {video_path} to Gemini...")
         
         # Ensure we are passing a path that exists
@@ -76,7 +99,7 @@ class VideoEditor:
         the cleanup call did.
         """
         name = getattr(video_file_obj, "name", None)
-        if not name:
+        if not name or self.client is None:
             return
         try:
             self.client.files.delete(name=name)
@@ -102,7 +125,7 @@ class VideoEditor:
             )
 
         prompt = f"""
-        You are a viral short-form video editor (TikTok / Reels / Shorts). You receive a video and its transcript.
+        You are a viral short-form video editor (TikTok / Reels / Shorts). You receive a video (or its frames, each labelled with its time) and its transcript.
         Decide WHERE a small set of tasteful, high-impact effects belongs. You do NOT write FFmpeg —
         you return an edit decision list, and a deterministic renderer applies it safely.
 
@@ -131,6 +154,26 @@ class VideoEditor:
         If no effects genuinely improve the video, return {{"edits": []}}.
         """
 
+        if self.client is None:
+            print("🤖 Asking Claude for an edit decision list...")
+            raw_edits = self._ask_claude(video_file_obj, prompt, EditPlan)["edits"]
+        else:
+            raw_edits = self._gemini_edits(video_file_obj, prompt)
+        if raw_edits is None:
+            return None
+
+        filter_string, applied = build_filter_string(
+            raw_edits, duration=duration, fps=fps, width=width, height=height,
+            has_captions=has_captions,
+        )
+        if not filter_string:
+            print("ℹ️ The model suggested no (valid) edits — keeping the clip untouched.")
+            return {"filter_string": None, "edits": []}
+        print(f"🎯 Applying {len(applied)} edits: " + ", ".join(f"{e['type']}@{e['start']:.1f}s" for e in applied))
+        return {"filter_string": filter_string, "edits": applied}
+
+    def _gemini_edits(self, video_file_obj, prompt):
+        """The edit list from Gemini, or None on a hard parse failure."""
         print("🤖 Asking Gemini for an edit decision list...")
         # Low media resolution: Gemini samples at 1 FPS and normalizes frames to
         # fixed token sizes, so "low" (~70 tokens/frame) cuts video-input cost
@@ -166,19 +209,7 @@ class VideoEditor:
                 ),
             )
 
-        raw_edits = self._extract_edits(response)
-        if raw_edits is None:
-            return None
-
-        filter_string, applied = build_filter_string(
-            raw_edits, duration=duration, fps=fps, width=width, height=height,
-            has_captions=has_captions,
-        )
-        if not filter_string:
-            print("ℹ️ Gemini suggested no (valid) edits — keeping the clip untouched.")
-            return {"filter_string": None, "edits": []}
-        print(f"🎯 Applying {len(applied)} edits: " + ", ".join(f"{e['type']}@{e['start']:.1f}s" for e in applied))
-        return {"filter_string": filter_string, "edits": applied}
+        return self._extract_edits(response)
 
     def get_effects_config(self, video_file_obj, duration, fps=30, width=None, height=None, transcript=None):
         """Asks Gemini for a structured EffectsConfig JSON for Remotion rendering."""
@@ -237,20 +268,24 @@ class VideoEditor:
         }}
         """
 
-        print("🤖 Asking Gemini for Remotion effects config...")
-        response = self.client.models.generate_content(
-            model=self.model_name,
-            contents=[video_file_obj, prompt],
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json"
-            )
-        )
+        if self.client is None:
+            print("🤖 Asking Claude for Remotion effects config...")
+            raw = self._ask_claude(video_file_obj, prompt, None)
+        else:
+            print("🤖 Asking Gemini for Remotion effects config...")
+            raw = self.client.models.generate_content(
+                model=self.model_name,
+                contents=[video_file_obj, prompt],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json"
+                )
+            ).text
 
-        print(f"🔍 DEBUG: Gemini Raw Response:\n{response.text}")
+        print(f"🔍 DEBUG: Raw Response:\n{raw}")
 
         try:
             # Clean response text (remove potential markdown blocks)
-            text = response.text
+            text = raw
             if text.startswith("```json"):
                 text = text[7:]
             elif text.startswith("```"):
@@ -272,7 +307,7 @@ class VideoEditor:
 
             return json.loads(text)
         except json.JSONDecodeError:
-            print(f"❌ Failed to parse effects config JSON: {response.text}")
+            print(f"❌ Failed to parse effects config JSON: {raw}")
             return None
 
     @staticmethod

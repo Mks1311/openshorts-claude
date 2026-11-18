@@ -83,3 +83,10 @@ sends JPEG frames as image blocks (layout picker, screen check, burned-in
 subtitle band, hook grounding) on `claude_cli.VISION_MODEL` (haiku), and the
 Thumbnail Studio's title, concept and description calls go through
 `thumbnail._ask_text`. Thumbnail images still need Gemini's image model.
+Claude takes no video file, so `get_visual_clips` sends it one frame every
+`VISION_FRAME_STEP` (3 s), labelled with its time, at most
+`VISION_FRAMES_PER_CALL` (100) per call: stretches of 300 s through the same
+`vision_segments` merge (the first 40 min with the default
+`VISION_MAX_SEGMENTS`), and no audio. The effects editor (`editor.VideoEditor`)
+likewise gets a frame every 2 s of the clip next to the transcript instead of
+an upload. Frames come from `frame_sampler.jpegs_every` (one ffmpeg pass).
