@@ -523,6 +523,24 @@ def _parse_source_range(start, end):
 # A stretch shorter than this cannot hold a few 15-60 s clips.
 MIN_RANGE_SECONDS = 60
 
+
+def _self_host_range(source_range):
+    """The partial for a stretch picked on a self-host (no billing), or None.
+
+    No metering probe runs here, so the duration is unknown: an end time is
+    required, and main.py's cut stops at the real end of the source.
+    """
+    if not source_range:
+        return None
+    if source_range[1] in (None, ""):
+        raise HTTPException(status_code=400, detail="Give an end time for the part to clip.")
+    # Unknown length: infinity keeps plan_source_range from clamping to it.
+    chosen = plan_source_range(math.inf, source_range)
+    if chosen is None:
+        return None
+    minutes = (chosen["end_seconds"] - chosen["start_seconds"]) / 60.0
+    return {"processed_minutes": round(minutes, 2), "total_minutes": None, **chosen, "chosen": True}
+
 # URL probes made for the dashboard's cost line, reused by /api/process when
 # the user submits the same link: (owner, url) -> (monotonic, minutes).
 _probe_cache: dict = {}
@@ -593,7 +611,7 @@ async def reserve_process_minutes(request, url, input_path, job_id, max_minutes=
     on the operator's key for free. Only skip metering when billing is off.
     """
     if not BILLING_ENABLED:
-        return None, 2, None, None, None
+        return None, 2, None, None, _self_host_range(source_range)
     user = await _user_from_request(request)
     if not managed_keys.has_active_entitlement(user):
         return None, 2, None, None, None  # shouldn't happen (resolve_gemini would have 402'd)
@@ -3460,6 +3478,8 @@ def is_transient_failure(logs) -> bool:
 def _should_auto_retry(job) -> bool:
     if not (job and job.get('status') == 'failed' and not _draining and job.get('cmd')):
         return False
+    if job.get('stop_requested'):
+        return False
     # YouTube limiting the account is neither the video's fault nor a server
     # fault: the job waits out the cooldown, a few times at most, on its own
     # counter (it has not used its one retry for real failures).
@@ -4839,6 +4859,21 @@ def _finish_job(job_id, returncode, output_dir):
         jobs[job_id]['logs'].append(_scrub_secrets(f"Process failed with exit code {returncode}"))
 
 
+def _kill_tree(process):
+    """Kill main.py and what it started (yt-dlp, ffmpeg), so a stopped job
+    leaves no encoder running on its own."""
+    try:
+        import psutil
+        children = psutil.Process(process.pid).children(recursive=True)
+    except Exception:
+        children = []
+    for p in (process, *children):
+        try:
+            p.kill()
+        except Exception:
+            pass
+
+
 async def _run_main(job_id, cmd, env, tick=None):
     """Run a main.py command of ``job_id`` to its end and return its exit
     code: output lines into the job's log, the manifest heartbeated, ``tick``
@@ -4868,6 +4903,8 @@ async def _run_main(job_id, cmd, env, tick=None):
             except Exception:
                 pass
             raise
+        if (jobs.get(job_id) or {}).get('stop_requested'):
+            _kill_tree(process)
         if time.time() - last_heartbeat >= HEARTBEAT_EVERY:
             _touch_manifest(job_id)
             last_heartbeat = time.time()
@@ -4887,6 +4924,10 @@ async def run_job(job_id, job_data):
         env.pop("PROXY_URL", None)
     output_dir = job_data['output_dir']
 
+    if job_data.get('stop_requested'):
+        # Stopped while it waited in line: never start it.
+        jobs[job_id]['status'] = 'failed'
+        return
     jobs[job_id]['status'] = 'processing'
     jobs[job_id]['logs'].append("Job started by worker.")
     print(f"🎬 [run_job] Executing command for {job_id}: {' '.join(cmd)}")
@@ -5804,6 +5845,30 @@ async def get_status(job_id: str, request: Request):
         # offer), so the dashboard can say so next to the clips.
         "partial": job.get('partial'),
     }
+
+
+@app.post("/api/jobs/{job_id}/stop")
+async def stop_job(job_id: str, request: Request):
+    """Stop a queued or running job for good: main.py and its children are
+    killed within ~2 s (``_run_main``), and it ends failed with no auto-retry.
+
+    shortcut: self-host only. In the cloud a failed job refunds its minutes,
+    so a stop near the end would keep the clips for free; decide its billing
+    before opening it there.
+    """
+    if BILLING_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await _assert_job_owner(request, job)
+    if job.get('status') not in ('queued', 'processing') or job.get('delivering'):
+        raise HTTPException(status_code=409, detail="This job is not running.")
+    if not job.get('stop_requested'):
+        job['stop_requested'] = True
+        # A queued job ends when it reaches a slot (run_job never starts it).
+        job['logs'].append("⏹️ Stopped. No clips will be made from this run.")
+    return {"status": "stopping"}
 
 
 def _locate_source(job_id: str):

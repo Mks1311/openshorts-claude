@@ -142,6 +142,42 @@ def test_source_range_reaches_the_reservation_and_the_job(dirs, monkeypatch):
     assert manifest["partial"] == partial
 
 
+def test_self_host_range_reaches_the_job(dirs, monkeypatch):
+    """Billing off: no metering, but the typed stretch is still cut."""
+    out_root, _ = dirs
+    monkeypatch.setattr(app_module, "BILLING_ENABLED", False)
+
+    async def _do(body):
+        transport = httpx.ASGITransport(app=app_module.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post("/api/process", json={
+                "url": "https://www.youtube.com/watch?v=stream", "acknowledged": True, **body})
+
+    resp = asyncio.run(_do({"source_start": 3900, "source_end": 5700}))
+    assert resp.status_code == 200, resp.text
+    job = app_module.jobs[resp.json()["job_id"]]
+    assert job["env"]["SOURCE_START_SECONDS"] == "3900.000"
+    assert job["env"]["MAX_SOURCE_MINUTES"] == "30.0000"
+    assert job["partial"]["chosen"] is True
+
+    # No end: the length is unknown here, so it is refused rather than guessed.
+    assert asyncio.run(_do({"source_start": 3900})).status_code == 400
+
+
+class TestSelfHostRange:
+    def test_from_zero_is_a_cut_not_the_whole_video(self):
+        assert app_module._self_host_range((0, 1800))["end_seconds"] == 1800.0
+
+    def test_nothing_picked_is_an_ordinary_job(self):
+        assert app_module._self_host_range(None) is None
+
+    @pytest.mark.parametrize("rng", [(100, None), (100, 130), (500, 100), ("x", 900)])
+    def test_missing_end_short_backwards_or_garbage_is_a_400(self, rng):
+        with pytest.raises(HTTPException) as e:
+            app_module._self_host_range(rng)
+        assert e.value.status_code == 400
+
+
 def test_estimate_without_billing_says_so():
     async def _do():
         transport = httpx.ASGITransport(app=app_module.app)
@@ -249,6 +285,47 @@ def test_cut_from_a_start_offset_happens_once(tmp_path):
     # A resumed job runs the same cut again on the already-cut file: no-op.
     main.cap_source_duration(path, 1, start_seconds=30)
     assert 59 <= seconds() <= 62
+
+
+class TestFetchWindow:
+    """What yt-dlp is asked to fetch for a capped or picked stretch."""
+
+    def test_a_stretch_of_a_long_stream_is_fetched_from_its_start(self):
+        # 40:00-60:00 of a 2 h 34 min stream: 20 min, not the 60 before its end.
+        assert main_module().fetch_window(9282, 2400, 3605) == (2400, 3605)
+
+    def test_unknown_length_is_ranged(self):
+        assert main_module().fetch_window(None, 2400, 3605) == (2400, 3605)
+
+    def test_a_source_not_much_longer_is_fetched_whole(self):
+        # A ranged fetch runs near realtime; a whole native download is faster here.
+        assert main_module().fetch_window(3600, 1800, 3005) is None
+
+    def test_cap_from_zero_is_unchanged(self):
+        assert main_module().fetch_window(1260, 0, 1145) is None
+        assert main_module().fetch_window(24120, 0, 1145) == (0, 1145)
+
+    def test_no_cap_fetches_whole(self):
+        assert main_module().fetch_window(9282, 0, None) is None
+
+
+def main_module():
+    return pytest.importorskip("main")
+
+
+def test_a_stretch_fetched_alone_is_not_cut_again(tmp_path):
+    """The download already holds 40:00-60:00: seeking 40 min into it would
+    leave nothing, now and when a job resumes."""
+    main = main_module()
+    path = str(tmp_path / "src.mp4")
+    subprocess.run([
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25",
+        "-t", "70", "-c:v", "libx264", "-preset", "ultrafast", path], check=True)
+    before = os.stat(path).st_mtime_ns
+    main.mark_range_cut(path)
+    main.cap_source_duration(path, 1, start_seconds=2400)
+    assert os.stat(path).st_mtime_ns == before
 
 
 def test_failed_posts_are_logged_once_per_request(monkeypatch, capsys):

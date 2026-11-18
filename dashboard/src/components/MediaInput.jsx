@@ -19,6 +19,14 @@ const MIN_SOURCE_SECONDS = 45;
 
 // Duration of a local video file in seconds, or null when the browser cannot
 // read it (unsupported codec): then the server stays the judge.
+// "1:05:30", "65:30" or "65" (minutes) -> seconds; null when blank or unreadable.
+const parseClock = (text) => {
+    const parts = String(text || '').trim().split(':');
+    if (!parts[0] || parts.length > 3 || parts.some((p) => !/^\d+(\.\d+)?$/.test(p))) return null;
+    if (parts.length === 1) return Number(parts[0]) * 60;
+    return parts.reduce((total, p) => total * 60 + Number(p), 0);
+};
+
 const readVideoDuration = (file) => new Promise((resolve) => {
     try {
         const url = URL.createObjectURL(file);
@@ -33,7 +41,7 @@ const readVideoDuration = (file) => new Promise((resolve) => {
 });
 
 export default function MediaInput({ onProcess, isProcessing }) {
-    const { plan } = useAuth();
+    const { plan, isManaged } = useAuth();
     const [youtubeUrlEnabled, setYoutubeUrlEnabled] = useState(true);
     // File upload is the primary path; the link is secondary.
     const [mode, setMode] = useState('file'); // 'file' | 'url'
@@ -44,6 +52,16 @@ export default function MediaInput({ onProcess, isProcessing }) {
     const [acknowledged, setAcknowledged] = useState(false);
     // {start, end} in seconds when the user picked a stretch under the cost line.
     const [range, setRange] = useState(null);
+    // Self-host has no cost line to pick a stretch on: typed start/end instead.
+    const [startText, setStartText] = useState('');
+    const [endText, setEndText] = useState('');
+    const typedStart = parseClock(startText);
+    const typedEnd = parseClock(endText);
+    const rangeError = !isManaged && (startText || endText)
+        ? (typedEnd == null ? 'Enter an end time.'
+            : (startText && typedStart == null) ? 'Start time not understood.'
+            : typedEnd - (typedStart || 0) < 60 ? 'Pick at least 1 minute.' : null)
+        : null;
     const [outputFormat, setOutputFormat] = useState('vertical'); // vertical | horizontal | square
     const [showInfo, setShowInfo] = useState(false);
     // Advanced generation controls — empty string means "let the AI decide",
@@ -122,7 +140,8 @@ export default function MediaInput({ onProcess, isProcessing }) {
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        if (!acknowledged) return;
+        if (!acknowledged || rangeError) return;
+        const typedRange = !isManaged && typedEnd != null;
         const advanced = {
             targetClips: targetClips || null,
             clipMinSeconds: clipMinSeconds || null,
@@ -130,8 +149,8 @@ export default function MediaInput({ onProcess, isProcessing }) {
             autoHook,
             autoHookStyle,
             layout,
-            sourceStart: range ? Math.round(range.start) : null,
-            sourceEnd: range ? Math.round(range.end) : null,
+            sourceStart: typedRange ? Math.round(typedStart || 0) : range ? Math.round(range.start) : null,
+            sourceEnd: typedRange ? Math.round(typedEnd) : range ? Math.round(range.end) : null,
         };
         try {
             localStorage.setItem('os_auto_hook', autoHook ? '1' : '0');
@@ -269,6 +288,34 @@ export default function MediaInput({ onProcess, isProcessing }) {
                     range={range}
                     onRangeChange={setRange}
                 />
+
+                {!isManaged && (
+                    <div className="mt-5 grid grid-cols-2 gap-2">
+                        <div>
+                            <label htmlFor="range-start" className="eyebrow mb-1.5 block">clip from</label>
+                            <input
+                                id="range-start" type="text" inputMode="numeric"
+                                value={startText}
+                                onChange={(e) => setStartText(e.target.value)}
+                                placeholder="0:00"
+                                className="input-field"
+                            />
+                        </div>
+                        <div>
+                            <label htmlFor="range-end" className="eyebrow mb-1.5 block">to</label>
+                            <input
+                                id="range-end" type="text" inputMode="numeric"
+                                value={endText}
+                                onChange={(e) => setEndText(e.target.value)}
+                                placeholder="e.g. 1:35:00"
+                                className="input-field"
+                            />
+                        </div>
+                        <p className={`col-span-2 text-[11px] leading-relaxed ${rangeError ? 'text-danger' : 'text-muted'}`} role={rangeError ? 'alert' : undefined}>
+                            {rangeError || 'Long video or livestream? Clip only part of it: h:mm:ss, mm:ss or minutes. Leave blank for the whole video.'}
+                        </p>
+                    </div>
+                )}
 
                 {/* Output format selector */}
                 <div className="mt-5" data-tutorial="output-format">
@@ -423,7 +470,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
                 <button
                     type="submit"
                     data-tutorial="generate"
-                    disabled={isProcessing || !acknowledged || (mode === 'url' && !url) || (mode === 'file' && (!file || fileTooShort))}
+                    disabled={isProcessing || !acknowledged || !!rangeError || (mode === 'url' && !url) || (mode === 'file' && (!file || fileTooShort))}
                     className="w-full btn-primary mt-4"
                 >
                     {isProcessing ? (

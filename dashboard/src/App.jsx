@@ -355,6 +355,20 @@ function App() {
   const [autopilotOn, setAutopilotOn] = useState(false);
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, processing, complete, error
+  const [stopping, setStopping] = useState(false);
+  useEffect(() => { if (status !== 'processing') setStopping(false); }, [status]);
+  // Self-host only: the server ends the job within a couple of seconds and the
+  // poll then reports it failed, with "Stopped" in the log.
+  const stopJob = async () => {
+    if (!jobId || !window.confirm('Stop this job? Clips it has not finished are lost.')) return;
+    setStopping(true);
+    try {
+      await apiJson(`/api/jobs/${jobId}/stop`, { method: 'POST' });
+    } catch (e) {
+      setStopping(false);
+      setLogs(l => [...l, `Could not stop the job: ${e.detail || e.message}`]);
+    }
+  };
   const [results, setResults] = useState(null);
   // Best clips first. The backend hands them back in transcript order, which
   // buries the strongest one wherever it happens to fall in the video — and
@@ -2122,12 +2136,24 @@ function App() {
                     <Activity className={`text-brass ${status === 'processing' ? 'animate-pulse' : ''}`} size={18} />
                     Live Analysis
                   </h2>
-                  <span className={status === 'processing' ? 'badge-brass' :
-                    status === 'complete' ? 'badge-ok' :
-                      'badge-danger'
-                    }>
-                    {status.toUpperCase()}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    {status === 'processing' && !billingEnabled && jobId && (
+                      <button
+                        type="button"
+                        onClick={stopJob}
+                        disabled={stopping}
+                        className="btn-ghost text-xs py-1 px-2.5 flex items-center gap-1 disabled:opacity-50"
+                      >
+                        <X size={12} /> {stopping ? 'stopping…' : 'stop'}
+                      </button>
+                    )}
+                    <span className={status === 'processing' ? 'badge-brass' :
+                      status === 'complete' ? 'badge-ok' :
+                        'badge-danger'
+                      }>
+                      {status.toUpperCase()}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Trimmed run: say it while it renders, not only once the

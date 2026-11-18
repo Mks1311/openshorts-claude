@@ -715,6 +715,36 @@ def _file_stamp(path):
         return None
 
 
+def mark_range_cut(path):
+    """Record that ``path`` holds the picked stretch already (``.range``)."""
+    try:
+        with open(f"{path}.range", "w") as f:
+            json.dump(_file_stamp(path), f)
+    except OSError:
+        pass
+
+
+def fetch_window(duration, range_start, range_cap):
+    """``(start, end)`` seconds for yt-dlp to fetch, or None to fetch it whole.
+
+    Only when the source is far longer than the window: a ranged fetch goes
+    through ffmpeg at ~1-2.5x realtime, while a native download of a source a
+    bit over the window takes seconds. A 21-min video on a 19-min cap took
+    8 min ranged against ~30 s whole (prod, 25-sep-2026); a finished 6.7 h
+    livestream is ~13 GB whole. A picked stretch (``range_start`` > 0) is
+    fetched from its start, so a window in the middle of a long stream costs
+    its own length, not everything before it.
+    """
+    if not range_cap:
+        return None
+    span = range_cap - range_start
+    if span <= 0:
+        return None
+    if duration and float(duration) <= max(3 * span, span + 2700):
+        return None
+    return (range_start, range_cap)
+
+
 def cap_source_duration(input_video, max_minutes, safety=False, start_seconds=0.0):
     """Cut ``input_video`` down to its first ``max_minutes`` minutes, in place.
 
@@ -787,11 +817,7 @@ def cap_source_duration(input_video, max_minutes, safety=False, start_seconds=0.
             os.replace(tmp, input_video)
             shown = f"{int(math.ceil(duration / 60))}" if duration else "?"
             if start:
-                try:
-                    with open(range_stamp, "w") as f:
-                        json.dump(_file_stamp(input_video), f)
-                except OSError:
-                    pass
+                mark_range_cut(input_video)
                 print(f"✂️ Clipping {start / 60:.1f}-{(start + secs) / 60:.1f} min of {shown}: "
                       f"the part picked in the dashboard.")
             elif safety:
@@ -1014,6 +1040,9 @@ def _download_youtube_video(url, output_dir=".", on_audio=None, allow_paid=True,
     # with no known duration) only the paid range plus a margin is fetched;
     # cap_source_duration still makes the exact cut afterwards.
     _range_cap = None
+    # Where a ranged fetch begins: 0, or the start of a stretch picked in the
+    # dashboard (only that stretch is fetched; see the .range stamp below).
+    _range_start = 0.0
     if cap_minutes is not None:
         _range_cap = float(cap_minutes) * 60.0 + 60.0
     for _var, _margin in (() if cap_minutes is not None else
@@ -1023,9 +1052,9 @@ def _download_youtube_video(url, output_dir=".", on_audio=None, allow_paid=True,
             try:
                 _range_cap = float(_raw) * 60.0 + _margin
                 if _var == "MAX_SOURCE_MINUTES":
-                    # A picked stretch ends at start + length: fetch up to there
-                    # (from 0, so the exact cut afterwards keeps its offsets).
-                    _range_cap += float(os.environ.get("SOURCE_START_SECONDS", "0") or 0)
+                    # A picked stretch ends at start + length.
+                    _range_start = max(0.0, float(os.environ.get("SOURCE_START_SECONDS", "0") or 0))
+                    _range_cap += _range_start
             except ValueError:
                 pass
             break
@@ -1073,15 +1102,8 @@ def _download_youtube_video(url, output_dir=".", on_audio=None, allow_paid=True,
             import ssrf_guard
             ssrf_guard.assert_public_urls(info)
         sanitized = sanitize_filename(info.get('title', 'youtube_video'))
-        # Only when the whole source is far bigger than what was paid for: a
-        # ranged fetch goes through ffmpeg at ~1-2.5x realtime, while a native
-        # download of a source a bit over the cap takes seconds. A 21-min video
-        # on a 19-min cap took 8 min ranged against ~30 s whole (prod,
-        # 25-sep-2026); a finished 6.7 h livestream is ~13 GB whole.
-        ranged = False
-        if _range_cap:
-            _dur = info.get('duration')
-            ranged = not _dur or float(_dur) > max(3 * _range_cap, _range_cap + 2700)
+        window = fetch_window(info.get('duration'), _range_start, _range_cap)
+        ranged = window is not None
         # Once per download, and not on the per-GB proxy (that is paid bytes,
         # and it is the last resort anyway). Not for a ranged download either:
         # the early audio would be the whole source.
@@ -1101,11 +1123,16 @@ def _download_youtube_video(url, output_dir=".", on_audio=None, allow_paid=True,
             'progress_hooks': [_progress_hook],
         }
         _dl_bytes["ranged"] = ranged
+        _dl_bytes["from"] = window[0] if ranged else 0.0
         if ranged:
             from yt_dlp.utils import download_range_func
-            dl_opts['download_ranges'] = download_range_func(None, [(0, _range_cap)])
-            print(f"✂️ Source is {'of unknown length' if not info.get('duration') else 'longer than the paid minutes'}"
-                  f": downloading only the first {_range_cap / 60:.0f} min.")
+            dl_opts['download_ranges'] = download_range_func(None, [window])
+            if window[0]:
+                print(f"✂️ Downloading only {window[0] / 60:.1f}-{window[1] / 60:.1f} min: "
+                      f"the part picked in the dashboard.")
+            else:
+                print(f"✂️ Source is {'of unknown length' if not info.get('duration') else 'longer than the paid minutes'}"
+                      f": downloading only the first {window[1] / 60:.0f} min.")
         with yt_dlp.YoutubeDL(dl_opts) as ydl:
             if info.get('_type', 'video') == 'video' and info.get('formats'):
                 ydl.process_ie_result(info, download=True)
@@ -1272,6 +1299,10 @@ Technical Details: {str(last_err)}
             if f.startswith(sanitized_title) and f.endswith('.mp4'):
                 downloaded_file = os.path.join(output_dir, f)
                 break
+    if _dl_bytes.get("from"):
+        # The file already IS the picked stretch: the .range stamp tells
+        # cap_source_duration (now and on a resume) not to seek into it again.
+        mark_range_cut(downloaded_file)
 
     # Paid bytes across EVERY attempt that used the per-GB proxy, failed ones
     # included: a paid attempt that died after three 10 MB fragments was
