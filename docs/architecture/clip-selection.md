@@ -78,3 +78,8 @@ stay on Gemini. Never wired in cloud mode: `BILLING_ENABLED` ignores it.
 the shape and the answer is validated again with the pydantic schema. Each call
 runs isolated (own system prompt, no tools/settings/MCP, scratch cwd so no
 CLAUDE.md is read) to keep it near 1.5k input tokens. Batch size stays at 8.
+With Claude the frame stages need no Gemini key either: `llm_backend.ask_frames`
+sends JPEG frames as image blocks (layout picker, screen check, burned-in
+subtitle band, hook grounding) on `claude_cli.VISION_MODEL` (haiku), and the
+Thumbnail Studio's title, concept and description calls go through
+`thumbnail._ask_text`. Thumbnail images still need Gemini's image model.

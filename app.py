@@ -283,6 +283,12 @@ def payment_required(error: str, message: str, **extra) -> HTTPException:
     })
 
 
+def _text_model_missing(api_key) -> bool:
+    """No Gemini key, and no self-host Claude CLI (LLM_PROVIDER=claude) to
+    answer text questions instead. Image generation still needs Gemini."""
+    return not api_key and not (llm_backend.provider() == "claude" and not BILLING_ENABLED)
+
+
 def gemini_missing_error():
     """The right 4xx when no Gemini key could be resolved.
 
@@ -9644,7 +9650,7 @@ async def thumbnail_analyze(
 ):
     """Analyze a video and suggest viral YouTube titles."""
     api_key = await resolve_gemini(request)
-    if not api_key:
+    if _text_model_missing(api_key):
         raise gemini_missing_error()
 
     pre_transcript = None
@@ -9803,7 +9809,7 @@ async def thumbnail_titles(
 ):
     """Refine title suggestions or accept a manual title."""
     api_key = await resolve_gemini(request)
-    if not api_key:
+    if _text_model_missing(api_key):
         raise gemini_missing_error()
     _check_text_length(req.title, _cloud_cfg().THUMBNAIL_TITLE_MAX_CHARS, "title")
     _check_text_length(req.message, _cloud_cfg().THUMBNAIL_MESSAGE_MAX_CHARS, "message")
@@ -10030,7 +10036,7 @@ async def thumbnail_describe(
 ):
     """Generate a YouTube description with chapters from the transcript."""
     api_key = await resolve_gemini(request)
-    if not api_key:
+    if _text_model_missing(api_key):
         raise gemini_missing_error()
 
     _check_text_length(req.title, _cloud_cfg().THUMBNAIL_TITLE_MAX_CHARS, "title")

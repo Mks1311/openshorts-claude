@@ -20,7 +20,6 @@ hook stands. Never raises: a hook problem must never cost the clip.
 """
 from __future__ import annotations
 
-import json
 import os
 from typing import Optional
 
@@ -121,34 +120,21 @@ def frames_at(video_path, times, width=None):
     return out
 
 
-def _ask_gemini(frames, prompt, api_key):
+def _ask_model(frames, prompt):
     """One vision call; returns the parsed dict. Split out so tests can stub it."""
-    from google import genai
-    from google.genai import types as genai_types
     import gemini_worker
-
-    client = genai.Client(api_key=api_key)
-    model_name = os.environ.get("GEMINI_MODEL") or "gemini-3.1-flash-lite"
-    parts = [genai_types.Part.from_bytes(data=b, mime_type="image/jpeg") for b in frames]
-    response = client.models.generate_content(
-        model=model_name,
-        contents=parts + [prompt],
-        config=genai_types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=gemini_worker.GroundedHook,
-        ))
-    gemini_worker.raise_if_blocked(response)
-    return json.loads(response.text) or {}
+    import llm_backend
+    return llm_backend.ask_frames(list(frames) + [prompt], gemini_worker.GroundedHook)
 
 
 def reground(clip_path, clip, transcript, start, end) -> Optional[dict]:
     """Rewrite ``clip['viral_hook_text']`` / ``video_title_for_youtube_short``
     in place from the clip's frames. Returns what changed (also stored under
     ``clip['hook_grounding']``), or None when skipped or failed."""
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        print("   🪝 Hook grounding skipped: needs a Gemini key (frames), "
-              "keeping the transcript hook.")
+    import llm_backend
+    if not llm_backend.sees():
+        print("   🪝 Hook grounding skipped: needs LLM_PROVIDER=claude or a Gemini key "
+              "(frames), keeping the transcript hook.")
         return None
     try:
         import gemini_worker
@@ -163,7 +149,7 @@ def reground(clip_path, clip, transcript, start, end) -> Optional[dict]:
             current_hook=clip.get("viral_hook_text") or "",
             current_title=clip.get("video_title_for_youtube_short") or "",
             transcript=clip_words(transcript, start, end)[:4000] or "(no speech)")
-        answer = _ask_gemini(frames, prompt, api_key)
+        answer = _ask_model(frames, prompt)
         hook = str(answer.get("viral_hook_text") or "").strip()
         title = str(answer.get("video_title_for_youtube_short") or "").strip()
         if not hook:

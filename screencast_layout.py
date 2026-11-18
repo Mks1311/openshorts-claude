@@ -32,7 +32,6 @@ the face classifier sent to GENERAL are taken as the screen (``fallback_ranges``
 because the job was declared a screencast and GENERAL is the one layout that
 shrinks a screen into an unreadable strip.
 """
-import json
 import os
 
 import numpy as np
@@ -367,17 +366,14 @@ def detect_content_ranges(video_path, scenes, fps):
         return []
     if not scenes:
         return None
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        print("   ⚠️ Screen check needs GEMINI_API_KEY.")
+    import llm_backend
+    if not llm_backend.sees():
+        print("   ⚠️ Screen check needs LLM_PROVIDER=claude or GEMINI_API_KEY.")
         return None
 
-    model_name = os.environ.get("GEMINI_MODEL") or 'gemini-3.1-flash-lite'
     asked = shots_to_ask(scenes)
     print(f"   🔎 Screen check on {len(asked)} shot(s)…")
     try:
-        from google import genai
-        from google.genai import types as genai_types
         import gemini_worker
 
         frames = _shot_frames(video_path, scenes, asked)
@@ -388,17 +384,9 @@ def detect_content_ranges(video_path, scenes, fps):
         parts = []
         for n, (_, jpg) in enumerate(keep):
             parts.append(f"Shot {n}:")
-            parts.append(genai_types.Part.from_bytes(data=jpg, mime_type="image/jpeg"))
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=model_name,
-            contents=parts + [gemini_worker.SHOT_CONTENT_PROMPT],
-            config=genai_types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=gemini_worker.ShotContentResponse,
-            ))
-        gemini_worker.raise_if_blocked(response)
-        raw = (json.loads(response.text) or {}).get("shots") or []
+            parts.append(jpg)
+        raw = llm_backend.ask_frames(parts + [gemini_worker.SHOT_CONTENT_PROMPT],
+                                     gemini_worker.ShotContentResponse).get("shots") or []
     except Exception as e:
         print(f"   ⚠️ Screen check failed ({e}).")
         return None

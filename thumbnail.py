@@ -45,14 +45,27 @@ def _parse_json(text):
 
 
 def _frame_parts(video_path, n=TITLE_FRAMES, width=TITLE_FRAME_WIDTH):
-    """Evenly spaced frames as Gemini image parts (empty list on any failure)."""
+    """Evenly spaced frames as JPEG bytes (empty list on any failure)."""
     try:
         from layout_picker import sample_frames
-        return [types.Part.from_bytes(data=b, mime_type="image/jpeg")
-                for b in sample_frames(video_path, n=n, width=width)]
+        return list(sample_frames(video_path, n=n, width=width))
     except Exception as e:
         print(f"⚠️ [Thumbnail] Could not sample frames: {e}")
         return []
+
+
+def _ask_text(api_key, contents, json_out=True):
+    """The text model's answer as text, for text strings and JPEG frames
+    (bytes): Claude when LLM_PROVIDER=claude, else Gemini's TEXT_MODEL."""
+    import llm_backend
+    if llm_backend.provider() == "claude":
+        import claude_cli
+        return claude_cli.ask(contents, None)[0]
+    client = genai.Client(api_key=api_key)
+    parts = [types.Part.from_bytes(data=c, mime_type="image/jpeg") if isinstance(c, bytes) else c
+             for c in contents]
+    config = types.GenerateContentConfig(response_mime_type="application/json") if json_out else None
+    return client.models.generate_content(model=TEXT_MODEL, contents=parts, config=config).text
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +87,6 @@ def analyze_video_for_titles(api_key, video_path, transcript=None):
     else:
         print("🎬 [Thumbnail] Using pre-computed transcript (Whisper already done)...")
 
-    client = genai.Client(api_key=api_key)
     frames = _frame_parts(video_path)
     language = transcript.get("language", "en")
     segments = transcript.get("segments", [])
@@ -114,15 +126,11 @@ OUTPUT JSON:
 }}"""
 
     print("🤖 [Thumbnail] Brainstorming titles...")
-    response = client.models.generate_content(
-        model=TEXT_MODEL,
-        contents=frames + [brainstorm_prompt],
-        config=types.GenerateContentConfig(response_mime_type="application/json"),
-    )
+    text = _ask_text(api_key, frames + [brainstorm_prompt])
     try:
-        draft = _parse_json(response.text)
+        draft = _parse_json(text)
     except (json.JSONDecodeError, AttributeError):
-        print(f"❌ [Thumbnail] Failed to parse brainstorm JSON: {getattr(response, 'text', '')}")
+        print(f"❌ [Thumbnail] Failed to parse brainstorm JSON: {text}")
         return {
             "titles": ["Could not generate titles - please try again"],
             "thumbnail_texts": [],
@@ -163,18 +171,14 @@ OUTPUT JSON:
 }}"""
 
     print("🧐 [Thumbnail] Scoring titles...")
-    response = client.models.generate_content(
-        model=TEXT_MODEL,
-        contents=[critic_prompt],
-        config=types.GenerateContentConfig(response_mime_type="application/json"),
-    )
+    text = _ask_text(api_key, [critic_prompt])
     try:
-        picked = _parse_json(response.text)
+        picked = _parse_json(text)
         titles = [t for t in picked.get("titles", []) if isinstance(t, str) and t.strip()]
         if not titles:
             raise ValueError("no titles")
     except (json.JSONDecodeError, AttributeError, ValueError):
-        print(f"⚠️ [Thumbnail] Critic failed, falling back to the brainstorm: {getattr(response, 'text', '')[:300]}")
+        print(f"⚠️ [Thumbnail] Critic failed, falling back to the brainstorm: {(text or '')[:300]}")
         titles = candidates[:10]
         picked = {"thumbnail_texts": [], "recommended": []}
 
@@ -197,7 +201,6 @@ def refine_titles(api_key, context, user_message, conversation_history=None):
     """
     Takes video context + user feedback and returns refined title suggestions.
     """
-    client = genai.Client(api_key=api_key)
 
     history_text = ""
     if conversation_history:
@@ -231,23 +234,16 @@ OUTPUT JSON:
     "language": "ISO 639-1 code of the language the titles are written in"
 }}"""
 
-    response = client.models.generate_content(
-        model=TEXT_MODEL,
-        contents=[prompt],
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json"
-        )
-    )
-
+    text = _ask_text(api_key, [prompt])
     try:
-        result = _parse_json(response.text)
+        result = _parse_json(text)
         titles = [t for t in result.get("titles", []) if isinstance(t, str) and t.strip()]
         texts = [str(t) for t in result.get("thumbnail_texts", [])][:len(titles)]
         texts += [""] * (len(titles) - len(texts))
         return {"titles": titles, "thumbnail_texts": texts,
                 "language": str(result.get("language") or "")[:5]}
     except (json.JSONDecodeError, AttributeError):
-        print(f"❌ [Thumbnail] Failed to parse refined titles: {response.text}")
+        print(f"❌ [Thumbnail] Failed to parse refined titles: {text}")
         return {"titles": ["Could not refine titles - please try again"], "thumbnail_texts": [], "language": ""}
 
 
@@ -366,7 +362,7 @@ def _crop_face_reference(frame_path, face_box, out_path):
 # Thumbnails
 # ---------------------------------------------------------------------------
 
-def plan_thumbnail_concepts(client, title, count, video_context="", extra_prompt="",
+def plan_thumbnail_concepts(api_key, title, count, video_context="", extra_prompt="",
                             thumbnail_text_hint="", has_person=False, language="en"):
     """
     One text call that designs `count` DIFFERENT thumbnails before any pixel is
@@ -403,15 +399,11 @@ Per concept give:
 OUTPUT JSON:
 {{"concepts": [{{"text": "...", "text_position": "left", "text_color": "yellow", "scene": "...", "why": "..."}}, ...]}}"""
 
-    response = client.models.generate_content(
-        model=TEXT_MODEL,
-        contents=[prompt],
-        config=types.GenerateContentConfig(response_mime_type="application/json"),
-    )
+    text = _ask_text(api_key, [prompt])
     try:
-        concepts = _parse_json(response.text).get("concepts", [])
+        concepts = _parse_json(text).get("concepts", [])
     except (json.JSONDecodeError, AttributeError):
-        print(f"⚠️ [Thumbnail] Concept JSON unreadable, using a generic concept: {getattr(response, 'text', '')[:200]}")
+        print(f"⚠️ [Thumbnail] Concept JSON unreadable, using a generic concept: {(text or '')[:200]}")
         concepts = []
     return normalise_concepts(concepts, count, title, thumbnail_text_hint)
 
@@ -677,7 +669,7 @@ def generate_thumbnail(api_key, title, session_id, face_image_path=None, bg_imag
         reference_images.append(_image_part(bg_image_path))
 
     concepts = plan_thumbnail_concepts(
-        client, title, count, video_context=video_context, extra_prompt=extra_prompt,
+        api_key, title, count, video_context=video_context, extra_prompt=extra_prompt,
         thumbnail_text_hint=thumbnail_text_hint, has_person=bool(reference_images), language=language)
     for i, c in enumerate(concepts):
         print(f"🎨 [Thumbnail] Concept {i + 1}: \"{c['text']}\" ({c['text_position']}) - {c['why']}")
@@ -732,7 +724,6 @@ def generate_youtube_description(api_key, title, transcript_segments, language, 
     Uses Gemini to generate a YouTube description with chapter markers from transcript segments.
     Returns: { "description": "full description text with chapters" }
     """
-    client = genai.Client(api_key=api_key)
 
     # Format segments for the prompt
     formatted_segments = []
@@ -776,12 +767,7 @@ REQUIREMENTS:
 OUTPUT: Return ONLY the description text (no JSON wrapper, no markdown code blocks). The description should be ready to paste directly into YouTube."""
 
     print("🤖 [Thumbnail] Generating YouTube description with chapters...")
-    response = client.models.generate_content(
-        model=TEXT_MODEL,
-        contents=[prompt],
-    )
-
-    description = response.text.strip()
+    description = _ask_text(api_key, [prompt], json_out=False).strip()
     # Clean up any accidental markdown wrappers
     if description.startswith("```"):
         lines = description.split("\n")

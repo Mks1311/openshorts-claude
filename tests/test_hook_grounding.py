@@ -81,14 +81,14 @@ def gemini(monkeypatch):
     monkeypatch.setattr(hg, "frames_at", lambda path, times, width=None: [b"jpg"] * len(times))
     seen = {}
 
-    def fake(frames, prompt, api_key):
+    def fake(frames, prompt):
         seen["frames"] = frames
         seen["prompt"] = prompt
         return {"on_screen": "Claude settings, MCP connector dialog for OpenShorts",
                 "viral_hook_text": "Conectando OpenShorts a Claude por MCP",
                 "video_title_for_youtube_short": "Así se conecta OpenShorts a Claude (MCP)"}
 
-    monkeypatch.setattr(hg, "_ask_gemini", fake)
+    monkeypatch.setattr(hg, "_ask_model", fake)
     return seen
 
 
@@ -121,7 +121,7 @@ def test_without_a_gemini_key_the_transcript_hook_stands(monkeypatch):
 def test_model_failure_never_touches_the_clip(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     monkeypatch.setattr(hg, "frames_at", lambda *a, **k: [b"jpg"])
-    monkeypatch.setattr(hg, "_ask_gemini", lambda *a: (_ for _ in ()).throw(RuntimeError("503")))
+    monkeypatch.setattr(hg, "_ask_model", lambda *a: (_ for _ in ()).throw(RuntimeError("503")))
     clip = {"viral_hook_text": "old", "layout_ranges": SCREEN}
     assert hg.reground("clip.mp4", clip, {"segments": []}, 0, 30) is None
     assert clip["viral_hook_text"] == "old"
@@ -130,7 +130,7 @@ def test_model_failure_never_touches_the_clip(monkeypatch):
 def test_empty_answer_keeps_the_old_hook(monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     monkeypatch.setattr(hg, "frames_at", lambda *a, **k: [b"jpg"])
-    monkeypatch.setattr(hg, "_ask_gemini", lambda *a: {"viral_hook_text": ""})
+    monkeypatch.setattr(hg, "_ask_model", lambda *a: {"viral_hook_text": ""})
     clip = {"viral_hook_text": "old", "layout_ranges": SCREEN}
     assert hg.reground("clip.mp4", clip, {"segments": []}, 0, 30) is None
     assert clip["viral_hook_text"] == "old"

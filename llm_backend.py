@@ -5,7 +5,9 @@ Ollama, LM Studio, vLLM, llama.cpp's server, LocalAI and OpenRouter all speak
 ``LLM_PROVIDER=openai``), the transcript scoring and detail passes in
 ``main.get_viral_clips`` go here instead of Gemini, so a self-hosted install
 can run the whole pipeline without a Google key. ``LLM_PROVIDER=claude``
-sends the same calls to the headless ``claude`` CLI instead (``claude_cli.py``).
+sends the same calls to the headless ``claude`` CLI instead (``claude_cli.py``),
+and with it the frame-based stages too (``ask_frames``), so neither needs a
+Google key.
 
 What stays on Gemini, because it needs a model that can look at frames or a
 video file: the layout picker (``layout_picker.py``), the on-screen content
@@ -173,3 +175,37 @@ def generate_json(prompt: str, schema: Type[BaseModel], model: Optional[str] = N
         "local": True,
     }
     return validated, cost
+
+
+# --- frame-based questions (layout, screen check, subtitles, hooks) ---------
+
+def sees() -> bool:
+    """True when a model that can look at frames is configured: Claude
+    (``LLM_PROVIDER=claude``) or Gemini (``GEMINI_API_KEY``)."""
+    return provider() == "claude" or bool(os.environ.get("GEMINI_API_KEY"))
+
+
+def ask_frames(contents, schema: Type[BaseModel]) -> dict:
+    """One call over text strings and JPEG frames (bytes), in order, answered
+    as a dict matching ``schema``. Claude when ``LLM_PROVIDER=claude``, else
+    Gemini. Raises on any failure; each caller has its own fallback."""
+    if provider() == "claude":
+        import claude_cli
+        return claude_cli.ask(contents, schema, model=claude_cli.VISION_MODEL,
+                              timeout=_timeout())[0]
+
+    from google import genai
+    from google.genai import types as genai_types
+    import gemini_worker
+
+    # Keep the client in a name: one built inline is closed before its call is sent.
+    client = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
+    parts = [genai_types.Part.from_bytes(data=c, mime_type="image/jpeg")
+             if isinstance(c, bytes) else c for c in contents]
+    response = client.models.generate_content(
+        model=os.environ.get("GEMINI_MODEL") or "gemini-3.1-flash-lite",
+        contents=parts,
+        config=genai_types.GenerateContentConfig(
+            response_mime_type="application/json", response_schema=schema))
+    gemini_worker.raise_if_blocked(response)
+    return json.loads(response.text) or {}
