@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activity, LayoutDashboard, Settings, Plus, History, X, Terminal, Shield, LayoutGrid, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Mail, Loader2, Download, Menu, Lock, Rocket } from 'lucide-react';
+import { Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activity, LayoutDashboard, Settings, Plus, History, X, Terminal, Shield, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Mail, Loader2, Download, Menu, Lock, Rocket } from 'lucide-react';
 import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import McpConnectCard from './components/McpConnectCard';
@@ -8,8 +8,6 @@ import ProcessingAnimation from './components/ProcessingAnimation';
 import { clipProgress, FREE_CLIPS_PER_VIDEO, FREE_CLIPS_QUIET, MAX_CLIPS_PER_VIDEO } from './lib/clipProgress';
 // import Gallery from './components/Gallery';
 import ThumbnailStudio from './components/ThumbnailStudio';
-import SaaShortsTab from './components/SaaShortsTab';
-import UGCGallery from './components/UGCGallery';
 import ScheduleWeekModal from './components/ScheduleWeekModal';
 import ClipEditor from './components/ClipEditor';
 import ReframeEditor from './components/ReframeEditor';
@@ -340,13 +338,6 @@ function App() {
     return '';
   });
 
-  // fal.ai API State - Load encrypted
-  const [falKey, setFalKey] = useState(() => {
-    const stored = localStorage.getItem('falKey_v1');
-    if (stored) return decrypt(stored);
-    return '';
-  });
-
   const [uploadUserId, setUploadUserId] = useState(() => localStorage.getItem('uploadUserId') || '');
   const [userProfiles, setUserProfiles] = useState([]); // List of {username, connected: []}
   // Post-generation social nudge: shown at the results peak until the user
@@ -428,7 +419,6 @@ function App() {
 
   // Silent-success "saved" states for the settings key inputs (design.md: no alert popups)
   const [elevenLabsSaved, setElevenLabsSaved] = useState(false);
-  const [falSaved, setFalSaved] = useState(false);
 
   // Sync state for original video playback
   const [syncedTime, setSyncedTime] = useState(0);
@@ -838,12 +828,6 @@ function App() {
   }, [elevenLabsKey]);
 
   useEffect(() => {
-    if (falKey) {
-      localStorage.setItem('falKey_v1', encrypt(falKey));
-    }
-  }, [falKey]);
-
-  useEffect(() => {
     if ((uploadPostKey || isManaged) && userProfiles.length === 0) {
       fetchUserProfiles({ silent: true });
     }
@@ -1053,7 +1037,7 @@ function App() {
   // dropped so a reload does not keep forcing the tab.
   const [autopilotConnected, setAutopilotConnected] = useState(null); // connect outcome, see lib/connectReturn.js
   useEffect(() => {
-    const DEEP_LINK_TABS = ['autopilot', 'history', 'settings', 'thumbnails', 'dashboard', 'saasshorts'];
+    const DEEP_LINK_TABS = ['autopilot', 'history', 'settings', 'thumbnails', 'dashboard'];
     const apply = () => {
       const hash = window.location.hash || '';
       if (!hash.startsWith('#app?')) return;
@@ -1135,9 +1119,9 @@ function App() {
     finishTutorial();
   };
   // Included in the plan (fully managed, no keys): Clip Generator + YouTube Studio.
-  // Advanced (bring your own fal.ai + ElevenLabs keys): AI Shorts + AI Agent.
+  // Advanced (bring your own keys): AI Agent.
   const INCLUDED_TOOL_TABS = ['dashboard', 'thumbnails'];
-  const ADVANCED_TOOL_TABS = ['saasshorts', 'ai-agent'];
+  const ADVANCED_TOOL_TABS = ['ai-agent'];
   const TOOL_NAMES = { dashboard: 'the Clip Generator', thumbnails: 'the YouTube Studio' };
   const gateThisTab = needsPlan && INCLUDED_TOOL_TABS.includes(activeTab);      // included tool, no plan yet
   const advancedThisTab = billingEnabled && ADVANCED_TOOL_TABS.includes(activeTab); // BYOK-notice tools
@@ -1415,10 +1399,7 @@ function App() {
     { id: 'dashboard', ord: '01', icon: LayoutDashboard, label: 'Clip Generator', short: 'clips', primary: true },
     // Cloud only: it runs on the managed pipeline and the Upload-Post connection.
     ...(billingEnabled ? [{ id: 'autopilot', ord: '02', icon: Rocket, label: 'Autopilot', short: 'autopilot', isNew: true }] : []),
-    // AI Shorts and its UGC gallery need fal + ElevenLabs keys: hidden on a Claude self-host.
-    ...(claudeLlm ? [] : [{ id: 'saasshorts', ord: '03', icon: Sparkles, label: 'AI Shorts', short: 'ai shorts', byok: true, primary: true }]),
     { id: 'ai-agent', ord: '04', icon: Bot, label: 'AI Agent', short: 'agent', byok: true },
-    ...(claudeLlm ? [] : [{ id: 'ugc-gallery', ord: '05', icon: LayoutGrid, label: 'UGC Gallery', short: 'gallery', primary: true }]),
     { id: 'thumbnails', ord: '06', icon: Image, label: 'YouTube Studio', short: 'studio', primary: true },
     ...(billingEnabled && isSignedIn ? [{ id: 'history', ord: '07', icon: History, label: 'History', short: 'history' }] : []),
     { id: 'settings', ord: '08', icon: Settings, label: 'Settings', short: 'settings' },
@@ -1979,69 +1960,7 @@ function App() {
                 </div>
               </div>
 
-              <div className="card p-4 sm:p-6 mt-8">
-                <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-input bg-paper3 flex items-center justify-center shrink-0">
-                      <Sparkles size={16} className="text-brass" />
-                    </div>
-                    <h2 className="text-base font-medium text-ink lowercase">AI Shorts (UGC Videos)</h2>
-                  </div>
-                  <span className="readout">BYOK</span>
-                </div>
-                <p className="text-xs text-muted mb-6 leading-relaxed">
-                  Generate UGC-style videos with AI actors for any product or business using <strong>fal.ai</strong>.
-                  <strong> Not covered by your plan</strong> — bring your own fal.ai + ElevenLabs keys (billed by those
-                  providers, ~$0.65-2 per video). Your plan still covers the AI script &amp; orchestration.
-                </p>
-                <div className="space-y-4">
-                  <label className="block text-sm text-muted">fal.ai API Key</label>
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <input
-                      type="password"
-                      value={falKey}
-                      onChange={(e) => setFalKey(e.target.value)}
-                      className="input-field"
-                      placeholder="fal_..."
-                    />
-                    <button
-                      onClick={() => {
-                        if (falKey) {
-                          localStorage.setItem('falKey_v1', encrypt(falKey));
-                          setFalSaved(true);
-                          setTimeout(() => setFalSaved(false), 2000);
-                        }
-                      }}
-                      className={falSaved ? 'badge-ok px-4' : 'btn-quiet py-2 px-4 text-sm'}
-                    >
-                      {falSaved ? <><Check size={12} /> saved</> : 'Save'}
-                    </button>
-                  </div>
-                  <div className="text-xs text-muted leading-relaxed">
-                    Get your API key from fal.ai to enable AI actor video generation.
-                    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <a href="https://fal.ai/dashboard/keys" target="_blank" rel="noopener noreferrer" className="p-2 border border-rule rounded-input hover:bg-paper3 transition-colors flex flex-col gap-1">
-                        <span className="text-ink2 font-medium">1. Sign Up</span>
-                        <span className="text-xs text-muted">Create fal.ai account</span>
-                      </a>
-                      <a href="https://fal.ai/dashboard/keys" target="_blank" rel="noopener noreferrer" className="p-2 border border-rule rounded-input hover:bg-paper3 transition-colors flex flex-col gap-1">
-                        <span className="text-ink2 font-medium">2. API Key</span>
-                        <span className="text-xs text-muted">Generate key</span>
-                      </a>
-                    </div>
-                    <br />
-                    <span className="text-muted">
-                      Keys are only stored in your browser. Sent to backend only to process requests.
-                    </span>
-                  </div>
-                </div>
-              </div>
             </div>
-          )}
-
-          {/* View: SaaS Shorts */}
-          {activeTab === 'saasshorts' && (
-            <SaaShortsTab geminiApiKey={apiKey} elevenLabsKey={elevenLabsKey} falKey={falKey} uploadPostKey={uploadPostKey} uploadUserId={uploadUserId} managed={isManaged} />
           )}
 
           {/* View: AI Agent */}
@@ -2156,15 +2075,6 @@ function App() {
                   </div>
                 </div>
 
-              </div>
-            </div>
-          )}
-
-          {/* View: UGC Gallery */}
-          {activeTab === 'ugc-gallery' && (
-            <div className="h-full overflow-y-auto custom-scrollbar animate-fade">
-              <div className="max-w-6xl mx-auto p-4 sm:p-6 md:p-8">
-                <UGCGallery />
               </div>
             </div>
           )}

@@ -475,17 +475,6 @@ def test_oauth_registration_is_rate_limited_per_ip(monkeypatch):
     assert c.post("/oauth/register", json=bad).json()["error"] == "slow_down"
 
 
-@pytest.mark.parametrize("body, field", [
-    ({"description": "x", "num_scripts": 500}, "num_scripts"),
-    ({"description": "x", "num_scripts": 0}, "num_scripts"),
-    ({"description": "x" * (config.SAAS_DESCRIPTION_MAX_CHARS + 1)}, "description"),
-])
-def test_saasshorts_inputs_are_bounded(body, field):
-    r = _call("post", "/api/saasshorts/analyze", json=body, headers={"X-Gemini-Key": "k"})
-    assert r.status_code in (400, 413)
-    assert field in r.json()["detail"]
-
-
 # --------------------------------------------------------------------------- #
 # Free AI edits survive a restart
 # --------------------------------------------------------------------------- #
