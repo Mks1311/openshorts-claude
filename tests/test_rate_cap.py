@@ -5,7 +5,6 @@ from fractions import Fraction
 import pytest
 
 import ffmpeg_utils
-import remote_worker
 
 
 @pytest.fixture(autouse=True)
@@ -84,6 +83,3 @@ def test_only_free_jobs_get_the_cap(monkeypatch):
     app._apply_rate_cap(env)
     assert "CUT_MAX_FPS" not in env
 
-
-def test_the_cap_travels_to_the_remote_worker():
-    assert remote_worker.allowed_option("CUT_MAX_FPS", "30")

@@ -273,7 +273,7 @@ def api(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(m, "OUTPUT_DIR", "output")
     for name, value in (("_draining", False), ("jobs", {}), ("_running_jobs", set()),
-                        ("_remote_jobs", set()), ("AUTO_RETRY_DELAY_SECONDS", 30.0),
+                        ("AUTO_RETRY_DELAY_SECONDS", 30.0),
                         ("job_queue", asyncio.PriorityQueue())):
         monkeypatch.setattr(m, name, value)
     return m
@@ -289,15 +289,12 @@ def _failed_job(m, job_id="j1"):
     return job
 
 
-def test_the_marker_is_consumed_and_only_this_host_may_send_it(api):
+def test_the_marker_is_consumed(api):
     m = api
     job = _failed_job(m)
     m._handle_job_line("j1", "YT_ACCOUNT_LIMITED 840")
     assert job["yt_limited"] is True
     assert not any("YT_ACCOUNT_LIMITED" in l for l in job["logs"])
-    other = _failed_job(m, "j2")
-    m._handle_job_line("j2", "YT_ACCOUNT_LIMITED 840", remote=True)
-    assert "yt_limited" not in other
 
 
 def test_the_segment_chatter_of_a_download_stays_out_of_the_job_log(api, capsys):

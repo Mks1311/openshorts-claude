@@ -35,7 +35,6 @@ import recut
 import layout_ranges
 import watermarked
 import media_auth
-import remote_worker
 import yt_account
 from jsonfile import write_json_atomic
 
@@ -100,7 +99,6 @@ CHILD_ENV_DENYLIST = frozenset({
     "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY",
     "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY",
     "OPENPANEL_CLIENT_SECRET", "ELEVENLABS_API_KEY",
-    "REMOTE_WORKER_TOKEN",
 })
 
 
@@ -1965,11 +1963,6 @@ _stopping = False                    # SIGTERM received: report not-ready so the
 _running_jobs: set = set()           # job ids with a live subprocess here
 
 
-# --- Remote CPU worker (remote_worker.py, worker.py) -------------------------
-# Off unless REMOTE_WORKER_TOKEN is set and REMOTE_WORKER_SLOTS > 0. A remote
-# job is dispatched and delivered by this instance like any other (it is in
-# ``_running_jobs``: a drain waits for it, its manifest is heartbeated), but
-# its main.py runs on the worker, so it holds none of the GPU slots.
 def _int_env(name, default):
     try:
         return max(0, int(os.environ.get(name, str(default)).strip()))
@@ -1977,71 +1970,9 @@ def _int_env(name, default):
         return default
 
 
-REMOTE_WORKER_TOKEN = os.environ.get("REMOTE_WORKER_TOKEN", "").strip()
-REMOTE_WORKER_SLOTS = _int_env("REMOTE_WORKER_SLOTS", 0)
-# No call from the worker for this long: the job comes back to this host.
-REMOTE_LEASE_SECONDS = _int_env("REMOTE_LEASE_SECONDS", 180)
-# What one job may send back: a clip is tens of MB, a job a few hundred.
-REMOTE_MAX_FILE_MB = _int_env("REMOTE_MAX_FILE_MB", 1024)
-REMOTE_MAX_JOB_MB = _int_env("REMOTE_MAX_JOB_MB", 3072)
-# A render that takes longer than this on the worker comes back to this host.
-REMOTE_MAX_SECONDS = _int_env("REMOTE_MAX_SECONDS", 3600)
-# This many of the last remote jobs did not end well: no more claims for a
-# while (a worker that is broken, or not ours any more, must not chew through
-# the queue: every claim costs a download and delays a user's video). A
-# window, not a streak: one good job in between does not reset it.
-REMOTE_BREAKER_FAILURES = _int_env("REMOTE_BREAKER_FAILURES", 4)
-REMOTE_BREAKER_WINDOW = 10           # ...counted over the last this many
-REMOTE_BREAKER_SECONDS = _int_env("REMOTE_BREAKER_SECONDS", 1800)
-
-
-def _quiet_minutes(spec):
-    """Minutes of the hour (UTC) given as "55-5,28-32": wrap-around ranges."""
-    out = set()
-    for part in (spec or "").split(","):
-        try:
-            a, _, b = part.strip().partition("-")
-            a, b = int(a) % 60, int(b or a) % 60
-        except ValueError:
-            continue
-        m = a
-        while True:
-            out.add(m)
-            if m == b:
-                break
-            m = (m + 1) % 60
-    return out
-
-
-# No new claim in these minutes of the hour: the worker's host also carries
-# Upload-Post, whose scheduled posts fill its link at :00-:05. A claim is a
-# ~1 GB source sent over that link a minute or two later.
-REMOTE_QUIET_MINUTES = _quiet_minutes(os.environ.get("REMOTE_QUIET_MINUTES", ""))
-# Per-transfer cap on the source sent to the worker, in Mbit/s (0: none).
-REMOTE_SOURCE_MBPS = _int_env("REMOTE_SOURCE_MBPS", 0)
-_remote_jobs: set = set()            # the subset of _running_jobs run remotely
-_remote_breaker = {"recent": [], "until": 0.0}
-
-
-def _remote_enabled() -> bool:
-    return (len(REMOTE_WORKER_TOKEN) >= remote_worker.MIN_TOKEN_LENGTH
-            and REMOTE_WORKER_SLOTS > 0)
-
-
-def _remote_outcome(ok: bool):
-    """Count a finished remote job towards the breaker."""
-    recent = _remote_breaker["recent"]
-    recent.append(bool(ok))
-    del recent[:-REMOTE_BREAKER_WINDOW]
-    if REMOTE_BREAKER_FAILURES and recent.count(False) >= REMOTE_BREAKER_FAILURES:
-        _remote_breaker.update(recent=[], until=time.time() + REMOTE_BREAKER_SECONDS)
-        print(f"🛰️ {REMOTE_BREAKER_FAILURES} of the last remote jobs did not end well: "
-              f"no job goes to the remote worker for {REMOTE_BREAKER_SECONDS // 60} min.")
-
-
 def _local_running() -> int:
     """Jobs whose main.py runs on this host: what the GPU slots count."""
-    return len(_running_jobs - _remote_jobs)
+    return len(_running_jobs)
 
 
 def _manifest_path(job_id):
@@ -2109,9 +2040,7 @@ def _jobs_busy_elsewhere(now=None) -> int:
             continue
         m = _read_manifest(name)
         # A job delivering elsewhere has left the card: it holds no GPU slot.
-        # Nor does one a remote worker is rendering.
-        if (m and _manifest_busy_elsewhere(m, now) and m.get("stage") != "delivering"
-                and not remote_worker.is_remote(os.path.join(OUTPUT_DIR, name))):
+        if m and _manifest_busy_elsewhere(m, now) and m.get("stage") != "delivering":
             busy += 1
     return busy
 
@@ -2484,10 +2413,6 @@ def _register_resumed(picked) -> int:
             env.pop("DOWNLOAD_SKIP_STATICS", None)
 
         priority = int(m.get("priority", 2))
-        # Whatever a remote worker was doing for the instance that held this
-        # job is void now: its next call is refused and it drops the job. A
-        # job cut during its delivery keeps the clips it is delivering.
-        remote_worker.clear(job_path, purge=m.get("stage") != _DELIVERY_STAGE)
         jobs[job_id] = {
             'status': 'queued',
             'logs': _TimedLog([f"♻️ Resuming your video after a server update (attempt {attempts})."]),
@@ -3142,8 +3067,7 @@ def _apply_brake_clips(job, cap=None, log=BRAKE_CLIPS_LOG):
 
 
 def _cap_clips_at_dispatch(job, priority):
-    """The clip caps of a free job, decided when it is dispatched (here or to
-    the remote worker) so a job already waiting gets today's setting: the
+    """The clip caps of a free job, decided when it is dispatched so a job already waiting gets today's setting: the
     free plan's own cap (``FREE_MAX_CLIPS``, or ``FREE_QUIET_MAX_CLIPS`` while
     the queue is short; never a job that carries no mark
     or whose owner bought a top-up) and the slow lane's brake, whichever is
@@ -3272,13 +3196,9 @@ async def _track_proxy_usage(job_id):
 
 
 def _release_slot(job_id):
-    """The job left the running set: free what it held. A remote job held a
-    worker slot, never one of the GPU's."""
+    """The job left the running set: free what it held."""
     _running_jobs.discard(job_id)
-    if job_id in _remote_jobs:
-        _remote_jobs.discard(job_id)
-    else:
-        concurrency_semaphore.release()
+    concurrency_semaphore.release()
     job_queue.task_done()
 
 
@@ -3293,9 +3213,7 @@ async def run_job_wrapper(job_id):
     try:
         if job:
             await run_job(job_id, job)
-            # The queue's ETA is about this host's slots: a remote render,
-            # several times slower, would skew it.
-            if job.get('status') == 'completed' and job_id not in _remote_jobs:
+            if job.get('status') == 'completed':
                 _record_job_duration(time.monotonic() - started)
     except asyncio.CancelledError:
         # The server is shutting down (drain timeout of a deploy) and took this
@@ -3540,8 +3458,6 @@ def is_transient_failure(logs) -> bool:
 
 
 def _should_auto_retry(job) -> bool:
-    # A run on the remote worker that did not complete is always run again
-    # here, whatever it printed: this host decides what a video's failure is.
     if not (job and job.get('status') == 'failed' and not _draining and job.get('cmd')):
         return False
     # YouTube limiting the account is neither the video's fault nor a server
@@ -3550,7 +3466,7 @@ def _should_auto_retry(job) -> bool:
     if job.get('yt_limited'):
         return int(job.get('yt_retries') or 0) < YT_LIMIT_RETRIES
     return bool(int(job.get('auto_retries') or 0) < AUTO_RETRY_LIMIT
-                and (job.get('remote_failed') or is_transient_failure(job.get('logs'))))
+                and is_transient_failure(job.get('logs')))
 
 
 def _clean_for_retry(output_dir):
@@ -3590,7 +3506,6 @@ def _schedule_auto_retry(job_id, job):
                            "Retrying it automatically, no minutes are charged twice.")
         print(f"🔁 Auto-retry {job['auto_retries']}/{AUTO_RETRY_LIMIT} for {job_id} "
               f"in {AUTO_RETRY_DELAY_SECONDS:.0f}s.")
-    job.pop('remote_failed', None)
     job['status'] = 'queued'
     job['result'] = None
     job['ready_files'] = {}
@@ -4719,9 +4634,9 @@ def _visible_logs(logs):
     return friendly_logs(logs)
 
 
-def _handle_job_line(job_id, line, remote=False):
+def _handle_job_line(job_id, line):
     """One output line of a job's main.py: internal markers are consumed, the
-    rest goes to the job's log. ``remote``: the line came from the worker."""
+    rest goes to the job's log."""
     decoded_line = _scrub_secrets(line.strip())
     if not decoded_line:
         return
@@ -4731,33 +4646,15 @@ def _handle_job_line(job_id, line, remote=False):
     if decoded_line.startswith("CLIP_READY "):
         try:
             _, index, filename = decoded_line.split(" ", 2)
-            # From the worker, only a plain .mp4 name of the job's own dir.
-            plain = not remote or (os.sep not in filename and "/" not in filename
-                                   and filename.lower().endswith(".mp4")
-                                   and remote_worker.safe_relpath(filename) == filename)
-            if remote and plain and (jobs.get(job_id) or {}).get('watermark'):
-                # Free plan: only the marked copy is ever announced.
-                plain = watermarked.is_marked(filename)
-            if job_id in jobs and plain:
+            if job_id in jobs:
                 jobs[job_id].setdefault('ready_files', {})[int(index)] = filename
         except ValueError:
             pass
         return
     if decoded_line.startswith("JOB_CPU "):
         # Internal marker: the job's CPU time (main.py, at exit).
-        print(f"📊 [job-cpu{'-remote' if remote else ''}] {job_id} {decoded_line[8:]}")
-        if not remote:
-            # The worker transcribes on its CPU by design: only this host's
-            # jobs say whether the GPU build of onnxruntime is the one loaded.
-            _note_job_asr(decoded_line[8:])
-        return
-    if remote and decoded_line.startswith(("SOURCE_READY ", "PROXY_BYTES=", "PROXY_ROUTE=",
-                                           "YT_ACCOUNT_LIMITED")):
-        return        # this host's own markers: the worker has no say in them
-    if decoded_line.startswith("SOURCE_READY "):
-        # Internal marker of ``main.py --prepare-only``: where the source is.
-        if job_id in jobs:
-            jobs[job_id]['remote_source'] = decoded_line.split(" ", 1)[1].strip()
+        print(f"📊 [job-cpu] {job_id} {decoded_line[8:]}")
+        _note_job_asr(decoded_line[8:])
         return
     if decoded_line.startswith("YT_ACCOUNT_LIMITED"):
         # Internal marker from main.py's downloader: the download failed only
@@ -4785,16 +4682,12 @@ def _handle_job_line(job_id, line, remote=False):
         except Exception:
             pass
         return
-    if remote and job_id in jobs and len(jobs[job_id]['logs']) >= REMOTE_MAX_LOG_LINES:
-        return        # a render prints a few hundred lines; the rest is noise
     if _DOWNLOADER_CHATTER.match(decoded_line):
         return
     print(f"📝 [Job Output] {decoded_line}")
     if job_id in jobs:
         jobs[job_id]['logs'].append(decoded_line)
 
-
-REMOTE_MAX_LOG_LINES = 5000
 
 # ffmpeg fetching a segmented (HLS) source says one line per request and per
 # connection: tens of thousands for a long video. They are kept out of the
@@ -4897,7 +4790,7 @@ def _refresh_partial_result(job_id, output_dir):
 
 
 def _finish_job(job_id, returncode, output_dir):
-    """main.py exited (here or on the remote worker): the job's final status
+    """main.py exited: the job's final status
     and result, from the exit code and what is on disk."""
     if returncode == 0:
         jobs[job_id]['status'] = 'completed'
@@ -4980,17 +4873,13 @@ async def _run_main(job_id, cmd, env, tick=None):
             last_heartbeat = time.time()
         if tick is not None:
             tick()
-    # The exit code can be read before the reader thread saw the last lines
-    # (SOURCE_READY is printed right before the exit).
+    # The exit code can be read before the reader thread saw the last lines.
     await asyncio.to_thread(t_log.join, 5)
     return process.returncode
 
 
 async def run_job(job_id, job_data):
     """Executes the subprocess for a specific job."""
-    if job_id in _remote_jobs:
-        return await _run_job_remote(job_id, job_data)
-
     cmd = job_data['cmd']
     env = _job_encode_env(job_data['env'])
     if await _paid_proxy_budget_exceeded():
@@ -5013,196 +4902,6 @@ async def run_job(job_id, job_data):
         jobs[job_id]['logs'].append(_scrub_secrets(f"Execution error: {str(e)}"))
 
 
-# --- A job rendered by the remote worker -------------------------------------
-REMOTE_LOST_LOG = "Execution error: the remote worker stopped answering (killed)."
-
-
-def _server_gemini_key():
-    """The model key this server gives its own jobs, or None."""
-    try:
-        if BILLING_ENABLED:
-            return managed_keys.gemini_key()
-    except Exception:
-        return None
-    return os.environ.get("GEMINI_API_KEY") or None
-
-
-def _remote_eligible(job_id, priority) -> bool:
-    """Whether a queued entry may go to the remote worker: a free job that
-    never failed here, whose command the worker can repeat, and that uses the
-    server's own model key (a caller's key never leaves this host)."""
-    job = jobs.get(job_id)
-    if not job or job.get('status') != 'queued' or job.get('env') is None:
-        return False
-    if priority < _queue_mode.FREE_PRIORITY or job.get('auto_retries'):
-        return False
-    if job_id in _running_jobs or job_id in _admitting:
-        return False
-    parsed = remote_worker.worker_args(job.get('cmd'))
-    if parsed is None:
-        return False
-    if "twitch.tv" in parsed[0].lower():
-        return False             # its viewer-clip signal needs this host's keys
-    key = job['env'].get("GEMINI_API_KEY")
-    if not key or key != _server_gemini_key():
-        return False
-    return os.path.exists(_manifest_path(job_id))
-
-
-def _claim_remote_job(worker):
-    """Hand the next eligible queued job to the remote worker, or None.
-    ``(job_id, claim)``. Loop thread only: it edits the heap.
-
-    Only while a job is already waiting for a GPU slot: with room on the card
-    the job runs here, where it is faster."""
-    if not _remote_enabled() or _draining or _stopping:
-        return None
-    if len(_remote_jobs) >= REMOTE_WORKER_SLOTS or not _admitting:
-        return None
-    if time.time() < _remote_breaker["until"]:
-        return None
-    if time.gmtime().tm_min in REMOTE_QUIET_MINUTES:
-        return None
-    heap = job_queue._queue
-    for entry in sorted(heap):
-        prio, _key, job_id = entry
-        if not _remote_eligible(job_id, prio):
-            continue
-        heap.remove(entry)
-        heapq.heapify(heap)
-        _queue_changed()
-        job = jobs[job_id]
-        if os.path.exists(_expired_marker(job_id)):
-            # The other instance of a deploy ended it as starved a moment ago.
-            job_queue.task_done()
-            job['status'] = 'failed'
-            job['queue_expired'] = True
-            try:
-                with open(_expired_marker(job_id)) as f:
-                    kind = f.read()
-            except OSError:
-                kind = ""
-            job['logs'].append(_expired_log(kind))
-            continue
-        _cap_clips_at_dispatch(job, prio)
-        _running_jobs.add(job_id)
-        _remote_jobs.add(job_id)
-        job['run_started'] = time.time()
-        _touch_manifest(job_id, started=True)
-        claim = remote_worker.begin(job['output_dir'], worker)
-        print(f"🛰️ Job {job_id} goes to the remote worker {str(worker)[:40]!r}.")
-        asyncio.create_task(run_job_wrapper(job_id))
-        return job_id, claim
-    return None
-
-
-async def _run_job_remote(job_id, job_data):
-    """A job whose main.py runs on the remote worker. This host fetches the
-    source (download and cut, ``main.py --prepare-only``: the worker has no
-    proxy or cookie), publishes the command, then follows the files the worker
-    sends into the job dir exactly as it follows a subprocess. A worker that
-    goes quiet fails the job as a transient error, so it is retried here."""
-    cmd = list(job_data['cmd'])
-    output_dir = job_data['output_dir']
-    jobs[job_id]['status'] = 'processing'
-    jobs[job_id]['logs'].append("Job started by worker.")
-    handed = False               # the worker was given the job (not just a claim)
-    worker_stopped = False       # ...and gave it back because it is restarting
-    log_mark = len(job_data['logs'])
-    try:
-        parsed = remote_worker.worker_args(cmd)
-        env = dict(job_data['env'])
-        if await _paid_proxy_budget_exceeded():
-            env.pop("PROXY_URL", None)
-        jobs[job_id].pop('remote_source', None)
-        returncode = await _run_main(job_id, cmd + ["--prepare-only"], env)
-        source = jobs[job_id].get('remote_source')
-        if returncode != 0 or not source or parsed is None:
-            _finish_job(job_id, returncode or 1, output_dir)
-            return
-        options = remote_worker.job_options(job_data['env'], os.environ)
-        # The worker encodes the hooked-only picture itself: the lazy path
-        # leaves an encode recipe next to the clip, and a recipe is something
-        # this host runs later, so it never comes from another machine.
-        options["HOOK_LAZY"] = "0"
-        if job_data['env'].get("WATERMARK") == "1":
-            # Free plan: the mark is this host's to set, and it is set before
-            # the worker can send anything, so /videos refuses the clean
-            # deliverables from the first file on.
-            watermarked.mark_job(output_dir)
-        if not remote_worker.set_ready(output_dir, source, parsed[1], options):
-            jobs[job_id]['status'] = 'failed'
-            jobs[job_id]['logs'].append(REMOTE_LOST_LOG)
-            return
-        remote_worker.touch_seen(output_dir)
-        handed = True
-
-        offset = 0
-        last_heartbeat = time.time()
-        ready_at = time.time()
-        returncode = None
-        while returncode is None:
-            await asyncio.sleep(2)
-            if time.time() - last_heartbeat >= HEARTBEAT_EVERY:
-                _touch_manifest(job_id)
-                last_heartbeat = time.time()
-            done = remote_worker.read_done(output_dir)
-            lines, offset = remote_worker.read_log(output_dir, offset)
-            for line in lines:
-                _handle_job_line(job_id, line, remote=True)
-            _refresh_partial_result(job_id, output_dir)
-            if done is not None:
-                returncode = done
-                worker_stopped = remote_worker.read_stopping(output_dir)
-            elif not remote_worker.is_remote(output_dir):
-                returncode = -15            # the claim was dropped under us
-            elif (time.time() - remote_worker.last_seen(output_dir) > REMOTE_LEASE_SECONDS
-                  or time.time() - ready_at > REMOTE_MAX_SECONDS):
-                print(f"🛰️ Remote worker went quiet or too slow on {job_id}; "
-                      f"taking the job back.")
-                jobs[job_id]['status'] = 'failed'
-                jobs[job_id]['logs'].append(REMOTE_LOST_LOG)
-                return
-        _finish_job(job_id, returncode, output_dir)
-        if returncode == 0:
-            # The worker's run is the job: the transcript prepared for it has
-            # no reader left (a failed run keeps it for the retry here).
-            remote_worker.drop_transcript(output_dir)
-        if (returncode == 0 and remote_worker.source_is_url(cmd)
-                and "--keep-original" not in cmd):
-            with suppress(OSError):
-                os.remove(source)
-    except Exception as e:
-        jobs[job_id]['status'] = 'failed'
-        jobs[job_id]['logs'].append(_scrub_secrets(f"Execution error: {str(e)}"))
-    finally:
-        # Whatever happened, the worker's claim ends here, and unless the job
-        # completed so does everything the worker uploaded: the retry on this
-        # host starts from this host's files. On a cancel (the server is
-        # stopping) it all stays: the next instance clears it on resume.
-        ok = job_data.get('status') == 'completed'
-        if ok or not _stopping:
-            # A job that completed is done with its worker even while this
-            # instance is being stopped: no claim may outlive the job.
-            remote_worker.clear(output_dir, purge=not ok)
-            # A worker being restarted hands its jobs back: they run again and
-            # say nothing about the worker, so they do not trip the breaker
-            # (a restart used to park the worker for its full 30 minutes).
-            if handed and not worker_stopped:
-                _remote_outcome(ok)
-            if not ok:
-                # What the worker printed is not this host's diagnosis: the
-                # run that follows here writes the log the user, the retry
-                # rules and the alerts read.
-                job_data['remote_failed'] = True
-                logs = job_data['logs']
-                del logs[log_mark:]
-                times = getattr(logs, 'times', None)
-                if times is not None:
-                    del times[log_mark:]
-                logs.append(REMOTE_LOST_LOG)
-
-
 @app.get("/health")
 async def health():
     """Lightweight liveness probe for uptime monitoring."""
@@ -5221,221 +4920,6 @@ async def health_ready():
     if _stopping:
         return JSONResponse({"status": "stopping"}, status_code=503)
     return {"status": "ready"}
-
-# --- Remote worker endpoints (worker.py calls them; nothing else does) --------
-# Bearer REMOTE_WORKER_TOKEN, and a per-job claim id for everything after the
-# claim. Every refusal is a 404 (the feature may as well not exist) except a
-# claim that is no longer the job's, which is 410: the worker drops the job.
-# The handlers only read and write the job directory (remote_worker.py), so
-# either container of a deploy can answer.
-def _worker_auth(request: Request):
-    if not _remote_enabled():
-        raise HTTPException(status_code=404, detail="Not found")
-    header = request.headers.get("authorization") or ""
-    token = header[7:].strip() if header[:7].lower() == "bearer " else ""
-    if not token or not hmac.compare_digest(token.encode(), REMOTE_WORKER_TOKEN.encode()):
-        raise HTTPException(status_code=404, detail="Not found")
-
-
-def _worker_job(request: Request, job_id: str):
-    """``(job dir, claim record)`` of a job this worker holds."""
-    _worker_auth(request)
-    try:
-        ok = str(uuid.UUID(job_id)) == job_id
-    except (ValueError, AttributeError, TypeError):
-        ok = False
-    if not ok:
-        raise HTTPException(status_code=404, detail="Not found")
-    job_dir = os.path.join(OUTPUT_DIR, job_id)
-    data = remote_worker.valid(job_dir, request.headers.get("x-worker-claim") or "")
-    if data is None:
-        raise HTTPException(status_code=410, detail="This job is no longer yours.")
-    return job_dir, data
-
-
-_WORKER_BODY_MAX = 1024 * 1024
-
-
-async def _worker_body(request: Request) -> dict:
-    """The small JSON body of a worker call, read with a hard size limit."""
-    try:
-        declared = int(request.headers.get("content-length") or 0)
-    except ValueError:
-        declared = 0
-    if declared > _WORKER_BODY_MAX:
-        raise HTTPException(status_code=413, detail="Body too large")
-    raw = bytearray()
-    async for chunk in request.stream():
-        raw += chunk
-        if len(raw) > _WORKER_BODY_MAX:
-            raise HTTPException(status_code=413, detail="Body too large")
-    try:
-        body = json.loads(bytes(raw) or b"{}")
-    except ValueError:
-        body = {}
-    return body if isinstance(body, dict) else {}
-
-
-@app.post("/internal/worker/claim")
-async def worker_claim(request: Request):
-    _worker_auth(request)
-    body = await _worker_body(request)
-    claimed = _claim_remote_job(str(body.get("worker") or "worker"))
-    if claimed is None:
-        return JSONResponse({"job_id": None})
-    return {"job_id": claimed[0], "claim": claimed[1]}
-
-
-@app.get("/internal/worker/jobs/{job_id}")
-async def worker_job(job_id: str, request: Request):
-    job_dir, data = _worker_job(request, job_id)
-    remote_worker.touch_seen(job_dir)
-    if data.get("state") != remote_worker.READY:
-        return {"state": remote_worker.PREPARING}
-    return {"state": remote_worker.READY, "source": data.get("source"),
-            "source_size": data.get("source_size"), "args": data.get("args") or [],
-            "env": data.get("env") or {},
-            "transcript_size": int(data.get("transcript_size") or 0)}
-
-
-@app.get("/internal/worker/jobs/{job_id}/transcript")
-async def worker_transcript(job_id: str, request: Request):
-    """The transcript this host prepared for the job (``main.py
-    --prepare-only``), as data: the worker reuses it instead of transcribing
-    on its CPU. Only for a live claim on a ready job, like the source."""
-    job_dir, data = _worker_job(request, job_id)
-    body = None
-    if data.get("state") == remote_worker.READY:
-        body = await asyncio.to_thread(remote_worker.read_transcript, job_dir)
-    if body is None:
-        raise HTTPException(status_code=404, detail="Not found")
-    remote_worker.touch_seen(job_dir)
-    return Response(content=body, media_type="application/json")
-
-
-@app.get("/internal/worker/jobs/{job_id}/source")
-async def worker_source(job_id: str, request: Request):
-    job_dir, data = _worker_job(request, job_id)
-    source = data.get("source") if data.get("state") == remote_worker.READY else None
-    real = os.path.realpath(source) if source else ""
-    roots = [os.path.realpath(job_dir), os.path.realpath(UPLOAD_DIR)]
-    if not real or not any(real.startswith(r + os.sep) for r in roots) or not os.path.isfile(real):
-        raise HTTPException(status_code=404, detail="Not found")
-    remote_worker.touch_seen(job_dir)
-    return StreamingResponse(_source_chunks(real, job_dir), media_type="application/octet-stream",
-                             headers={"Content-Length": str(os.path.getsize(real))})
-
-
-SOURCE_CHUNK = 1024 * 1024
-# REMOTE_SOURCE_MBPS is for all transfers together: when a quiet window ends,
-# up to REMOTE_WORKER_SLOTS sources leave at once for the same link.
-_source_bucket = {"free_at": 0.0}
-_source_lock = threading.Lock()
-
-
-def _source_turn(nbytes) -> float:
-    """Seconds this chunk's sender sleeps so the sum stays under the cap."""
-    with _source_lock:
-        now = time.time()
-        start = max(now, _source_bucket["free_at"])
-        _source_bucket["free_at"] = start + nbytes * 8 / (REMOTE_SOURCE_MBPS * 1e6)
-        return max(0.0, _source_bucket["free_at"] - now)
-SOURCE_SEEN_EVERY = 10           # seconds between lease touches while sending
-
-
-def _source_chunks(path, job_dir):
-    """The source file in chunks, touching the worker's lease while it is sent.
-
-    The worker makes no other call during the download, and a source of
-    ~1 GB sent from a busy host took more than REMOTE_LEASE_SECONDS (16-nov):
-    the job was taken back mid-transfer, four of them tripped the breaker and
-    the worker sat idle while this host was the one out of CPU. A sync
-    generator: Starlette reads it in a thread, off the event loop."""
-    last = time.time()
-    with open(path, "rb") as f:
-        while True:
-            chunk = f.read(SOURCE_CHUNK)
-            if not chunk:
-                break
-            yield chunk
-            if REMOTE_SOURCE_MBPS:
-                time.sleep(_source_turn(len(chunk)))
-            if time.time() - last >= SOURCE_SEEN_EVERY:
-                remote_worker.touch_seen(job_dir)
-                last = time.time()
-    remote_worker.touch_seen(job_dir)
-
-
-@app.post("/internal/worker/jobs/{job_id}/log")
-async def worker_log(job_id: str, request: Request):
-    job_dir, _data = _worker_job(request, job_id)
-    lines = (await _worker_body(request)).get("lines")
-    await asyncio.to_thread(remote_worker.append_log, job_dir,
-                            lines if isinstance(lines, list) else [])
-    return {"ok": True}
-
-
-@app.put("/internal/worker/jobs/{job_id}/file")
-async def worker_file(job_id: str, request: Request):
-    """One chunk of an output file (``name``), appended at ``offset``.
-    ``size`` on the last chunk: the file is complete and moves into the job
-    dir. Only a job that is rendering takes files, within its budget."""
-    job_dir, data = _worker_job(request, job_id)
-    q = request.query_params
-    name = q.get("name") or ""
-    try:
-        offset = max(0, int(q.get("offset") or 0))
-        size = int(q["size"]) if q.get("size") is not None else None
-    except ValueError:
-        raise HTTPException(status_code=400, detail="offset and size are numbers")
-    if data.get("state") != remote_worker.READY:
-        raise HTTPException(status_code=409, detail="The job is not rendering yet.")
-    file_max, job_max = REMOTE_MAX_FILE_MB * 1024 * 1024, REMOTE_MAX_JOB_MB * 1024 * 1024
-    written = 0
-    try:
-        # One upload request per job at a time (both containers of a deploy):
-        # the room granted below is then really this request's.
-        with remote_worker.upload_lock(job_dir):
-            rel, tmp, room = remote_worker.open_upload(job_dir, name, offset, file_max, job_max)
-            with open(tmp, "ab") as f:
-                async for chunk in request.stream():
-                    written += len(chunk)
-                    if written > room:
-                        raise remote_worker.UploadError(413, "file too large")
-                    f.write(chunk)
-            remote_worker.touch_seen(job_dir)
-            if size is not None:
-                remote_worker.finish_upload(
-                    job_dir, rel, size, request.headers.get("x-worker-claim") or "",
-                    file_max, job_max)
-    except remote_worker.UploadError as e:
-        if e.status == 413:
-            remote_worker.discard_upload(job_dir, name)
-        raise HTTPException(status_code=e.status, detail=e.detail)
-    return {"ok": True, "received": offset + written}
-
-
-@app.post("/internal/worker/jobs/{job_id}/done")
-async def worker_done(job_id: str, request: Request):
-    job_dir, data = _worker_job(request, job_id)
-    ready = data.get("state") == remote_worker.READY
-    try:
-        body = await _worker_body(request)
-        returncode = int(body["returncode"])
-    except Exception:
-        if not ready:
-            raise HTTPException(status_code=409, detail="The job is not rendering yet.")
-        raise HTTPException(status_code=400, detail="returncode required")
-    stopping = returncode != 0 and body.get("stopping") is True
-    if not ready and not stopping:
-        raise HTTPException(status_code=409, detail="The job is not rendering yet.")
-    # A worker that is being restarted hands back every job it holds, also
-    # the ones whose source this host is still preparing: refused, those
-    # stayed claimed by nobody until the lease ran out and each counted as a
-    # failure of the worker (a restart parked it for the breaker's 30 min).
-    remote_worker.mark_done(job_dir, returncode, stopping=stopping)
-    return {"ok": True}
-
 
 @app.get("/api/config")
 async def get_config():
