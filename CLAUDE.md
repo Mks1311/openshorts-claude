@@ -33,11 +33,10 @@ Ingest (yt-dlp or upload) → transcription (word timestamps) → scene detectio
 - `editor.py` (Gemini FFmpeg effects), `pro_mode.py` (talking-head re-edit), `hooks.py` (hook overlays), `subtitles.py` (SRT/ASS, burning), `translate.py` (ElevenLabs dubbing), `thumbnail.py`.
 - `mcp_server.py`, `mcp_stdio.py`: MCP over HTTP and stdio.
 - `cloud/`: auth, API keys, metering, billing, lifecycle emails, account erasure, autopilot, proxy ledger, alerts, queue watch.
-- `dashboard/src/App.jsx`: main React component. `dashboard/vite-plugin-seo.js` + `dashboard/seo/`: build-time SEO pages, sitemap, llms.txt. `dashboard/seo/data.js`: single source of truth for pricing/pipeline/competitor facts.
+- `dashboard/src/App.jsx`: main React component; `dashboard/src/main.jsx` routes the hash (a bare `/` is the app).
 
 ## Subsystem reference (read before touching)
 
-- SEO pages, free tools, attribution → `docs/architecture/seo-and-tools.md`
 - Layout picker, reframing modes, hook grounding → `docs/architecture/layouts-and-reframing.md`
 - Clip count, silent-footage fallback, local LLM → `docs/architecture/clip-selection.md`
 - Thumbnail Studio → `docs/architecture/thumbnails.md`
@@ -51,15 +50,6 @@ Ingest (yt-dlp or upload) → transcription (word timestamps) → scene detectio
 - Remote CPU worker (second host renders free jobs) → `docs/architecture/remote-worker.md`
 
 ## Hard rules
-
-**SEO / site**
-- Keep `seo/landing-fallback.js` in sync with `Landing.jsx`. Never add a static `public/sitemap.xml` back: `vite-plugin-seo.js` generates it.
-- Standalone pages are emitted as flat `.html` files (directories make nginx 301 and break canonicals).
-- When editing pricing anywhere, edit `seo/data.js` too. Never say "OpenShorts is free" without the Cloud price next to it.
-- `/gta-5-clips`, `/gta-6-clips` and `/platforms/twitch` state the silent-footage thresholds and stretch sizes: change their copy if that behaviour changes.
-
-**Free tools**
-- The youtube-transcript tool uses `STATIC_PROXY_URLS` (or direct) only, **never** `PROXY_URL`. A static route returning zero formats and zero captions is degraded, not "no captions".
 
 **Layouts and rendering**
 - `layout_picker` sends 12 frames at 1024px and asks for a closed choice, never the video and never a measurement.
