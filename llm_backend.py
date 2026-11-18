@@ -4,7 +4,8 @@ Ollama, LM Studio, vLLM, llama.cpp's server, LocalAI and OpenRouter all speak
 ``POST {base}/chat/completions``. When ``LLM_BASE_URL`` is set (or
 ``LLM_PROVIDER=openai``), the transcript scoring and detail passes in
 ``main.get_viral_clips`` go here instead of Gemini, so a self-hosted install
-can run the whole pipeline without a Google key.
+can run the whole pipeline without a Google key. ``LLM_PROVIDER=claude``
+sends the same calls to the headless ``claude`` CLI instead (``claude_cli.py``).
 
 What stays on Gemini, because it needs a model that can look at frames or a
 video file: the layout picker (``layout_picker.py``), the on-screen content
@@ -35,8 +36,11 @@ DEFAULT_TIMEOUT = 600.0  # local models on CPU are slow; a scoring batch can tak
 
 
 def provider() -> str:
-    """``"openai"`` when a compatible endpoint is configured, else ``"gemini"``."""
+    """``"claude"`` (headless CLI) when asked for, ``"openai"`` when a
+    compatible endpoint is configured, else ``"gemini"``."""
     explicit = (os.environ.get("LLM_PROVIDER") or "").strip().lower()
+    if explicit == "claude":
+        return "claude"
     if explicit in ("openai", "ollama", "local", "openai-compatible"):
         return "openai"
     if explicit == "gemini":
@@ -49,19 +53,21 @@ def base_url() -> str:
 
 
 def model_name() -> str:
-    return (os.environ.get("LLM_MODEL") or "").strip() or DEFAULT_MODEL
+    default = "sonnet" if provider() == "claude" else DEFAULT_MODEL
+    return (os.environ.get("LLM_MODEL") or "").strip() or default
 
 
 def active() -> bool:
-    """True when the moment picker should call the OpenAI-compatible server."""
-    return provider() == "openai" and bool(base_url())
+    """True when the moment picker should call Claude or the OpenAI-compatible server."""
+    p = provider()
+    return p == "claude" or (p == "openai" and bool(base_url()))
 
 
 def describe() -> Optional[dict]:
     """What ``/api/config`` tells the dashboard, or ``None`` when inactive."""
     if not active():
         return None
-    return {"provider": "openai", "model": model_name(), "baseUrl": base_url()}
+    return {"provider": provider(), "model": model_name(), "baseUrl": base_url()}
 
 
 def _timeout() -> float:
@@ -108,6 +114,10 @@ def generate_json(prompt: str, schema: Type[BaseModel], model: Optional[str] = N
     provider. Raises on HTTP errors, empty bodies and schema violations; the
     retry policy lives in the caller, same as for Gemini.
     """
+    if provider() == "claude":
+        import claude_cli
+        return claude_cli.ask(prompt, schema, model=model or model_name(), timeout=_timeout())
+
     import gemini_worker  # local import: keeps this module free of the google SDK
 
     url = f"{base_url()}/chat/completions"

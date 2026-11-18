@@ -72,3 +72,9 @@ silently). Self-host `/api/process` then accepts a request without
 `X-Gemini-Key` and `/api/config.localLlm` tells the dashboard not to demand one.
 Frame-based stages (`layout_picker`, `screencast_layout`, `get_visual_clips`)
 stay on Gemini. Never wired in cloud mode: `BILLING_ENABLED` ignores it.
+
+`LLM_PROVIDER=claude` sends the same calls to the headless `claude` CLI
+(`claude_cli.py`) on the signed-in Claude subscription. `--json-schema` enforces
+the shape and the answer is validated again with the pydantic schema. Each call
+runs isolated (own system prompt, no tools/settings/MCP, scratch cwd so no
+CLAUDE.md is read) to keep it near 1.5k input tokens. Batch size stays at 8.

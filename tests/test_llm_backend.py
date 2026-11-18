@@ -6,10 +6,13 @@ tests pin the contract main.py relies on: same (parsed, cost) shape as the
 Gemini stage, schema validation, and the response_format fallback ladder.
 """
 import json
+import os
+import subprocess
 
 import httpx
 import pytest
 
+import claude_cli
 import gemini_worker
 import llm_backend
 
@@ -148,4 +151,76 @@ def test_score_batch_shrinks_for_local_models(local, monkeypatch):
     assert main.score_batch_size() == 5
     monkeypatch.delenv("LLM_BASE_URL")
     monkeypatch.delenv("LLM_SCORE_BATCH")
+    assert main.score_batch_size() == 8
+
+
+# --- Claude through the headless CLI (LLM_PROVIDER=claude) ----------------
+
+@pytest.fixture
+def claude(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "claude")
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+
+
+def _cli(monkeypatch, payload, returncode=0, stderr=""):
+    """Stand in for the `claude -p` process; records its command, stdin and cwd."""
+    seen = {}
+
+    def fake_run(cmd, input=None, **kw):
+        seen.update(cmd=cmd, input=input, cwd=kw.get("cwd"))
+        out = payload if isinstance(payload, str) else json.dumps(payload)
+        return subprocess.CompletedProcess(cmd, returncode, out, stderr)
+
+    monkeypatch.setattr(claude_cli.subprocess, "run", fake_run)
+    return seen
+
+
+def test_claude_provider_activates_without_a_base_url(claude):
+    assert llm_backend.active() is True
+    assert llm_backend.describe() == {"provider": "claude", "model": "sonnet", "baseUrl": ""}
+
+
+def test_claude_call_is_isolated_schema_bound_and_validated(claude, monkeypatch):
+    windows = [{"id": "w0", "start": 0, "end": 90, "score": 88, "reason": "hook"}]
+    seen = _cli(monkeypatch, {"is_error": False, "structured_output": {"windows": windows},
+                              "usage": {"input_tokens": 10, "cache_read_input_tokens": 1500,
+                                        "output_tokens": 40}})
+    parsed, cost = llm_backend.generate_json("score these", gemini_worker.ScoreResponse)
+
+    cmd = seen["cmd"]
+    assert seen["input"] == "score these"  # prompt over stdin, not argv
+    assert cmd[cmd.index("--model") + 1] == "sonnet"
+    assert json.loads(cmd[cmd.index("--json-schema") + 1]) == \
+        gemini_worker.ScoreResponse.model_json_schema()
+    assert cmd[cmd.index("--tools") + 1] == ""
+    assert cmd[cmd.index("--setting-sources") + 1] == ""
+    assert seen["cwd"] != os.getcwd()  # a scratch dir: this repo's CLAUDE.md stays out
+    assert parsed["windows"] == windows
+    assert cost["input_tokens"] == 1510 and cost["output_tokens"] == 40
+    assert cost["total_cost"] == 0.0 and cost["model"] == "sonnet"
+
+
+def test_claude_api_error_carries_its_status_for_the_retry_policy(claude, monkeypatch):
+    _cli(monkeypatch, {"is_error": True, "api_error_status": 529,
+                       "terminal_reason": "api_error", "result": "Overloaded"})
+    with pytest.raises(RuntimeError, match="529"):
+        llm_backend.generate_json("x", gemini_worker.ScoreResponse)
+
+
+def test_claude_cli_without_json_output_raises_its_stderr(claude, monkeypatch):
+    _cli(monkeypatch, "", returncode=1, stderr="Not logged in")
+    with pytest.raises(RuntimeError, match="Not logged in"):
+        llm_backend.generate_json("x", gemini_worker.ScoreResponse)
+
+
+def test_claude_answer_missing_a_field_fails_validation(claude, monkeypatch):
+    _cli(monkeypatch, {"is_error": False, "structured_output": {"windows": [{"id": "w0"}]}})
+    with pytest.raises(ValueError, match="validation error"):
+        llm_backend.generate_json("x", gemini_worker.ScoreResponse)
+
+
+def test_claude_keeps_the_full_score_batch(claude, monkeypatch):
+    main = pytest.importorskip("main")
+    monkeypatch.delenv("LLM_SCORE_BATCH", raising=False)
     assert main.score_batch_size() == 8

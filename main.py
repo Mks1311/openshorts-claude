@@ -2196,7 +2196,7 @@ def _run_gemini_stage(client, model_name, prompt, schema):
             msg = str(e)
             transient = any(tok in msg for tok in (
                 '503', 'UNAVAILABLE', '429', 'RESOURCE_EXHAUSTED',
-                '500', 'INTERNAL', 'overloaded', 'Deadline',
+                '500', 'INTERNAL', 'overloaded', '529', 'Deadline',
                 'empty response body', 'did not contain a JSON object',
                 'Failed to parse Gemini JSON response',
                 # OpenAI-compatible servers: model still loading, busy, or a
@@ -2248,7 +2248,8 @@ def score_batch_size():
             return max(1, int(raw))
         except ValueError:
             pass
-    return 3 if llm_backend.active() else 8
+    # A small local model needs short prompts; Claude takes Gemini's batch.
+    return 3 if llm_backend.provider() == "openai" and llm_backend.active() else 8
 
 
 def get_viral_clips(transcript_result, video_duration, viewer_clips=None):
@@ -2268,7 +2269,8 @@ def get_viral_clips(transcript_result, video_duration, viewer_clips=None):
         # Self-hosted text model: no Google key needed for this stage.
         client = None
         model_name = llm_backend.model_name()
-        print(f"\U0001f916  Analyzing with local LLM at {llm_backend.base_url()} (2-pass: score → detail)...")
+        where = llm_backend.base_url() or "the claude CLI"
+        print(f"\U0001f916  Analyzing with {where} (2-pass: score → detail)...")
     else:
         print("\U0001f916  Analyzing with Gemini (2-pass: score → detail)...")
         api_key = os.getenv("GEMINI_API_KEY")
