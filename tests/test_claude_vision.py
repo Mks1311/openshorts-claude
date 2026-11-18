@@ -1,4 +1,4 @@
-"""Silent-video clipping and the effects editor on Claude (LLM_PROVIDER=claude).
+"""Silent-video clipping, the effects editor and thumbnails on Claude.
 
 Claude cannot take a video file, so both send timestamped frames instead:
 these tests pin the frame sampling, the per-stretch time offsets and the
@@ -15,7 +15,6 @@ import frame_sampler
 
 @pytest.fixture
 def claude(monkeypatch):
-    monkeypatch.setenv("LLM_PROVIDER", "claude")
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
     monkeypatch.delenv("LLM_MODEL", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
@@ -72,10 +71,8 @@ def test_editor_sends_frames_not_an_upload(claude, monkeypatch):
                            "strength": 0.1, "reason": "punchline"}]}, {}
 
     monkeypatch.setattr(claude_cli, "ask", fake_ask)
-    ed = editor_mod.VideoEditor(api_key=None)
-    assert ed.client is None
-    frames = ed.upload_video("clip.mp4")
-    ed.delete_uploaded(frames)  # nothing to delete, must not raise
+    ed = editor_mod.VideoEditor()
+    frames = ed.sample_frames("clip.mp4")
     out = ed.get_ffmpeg_filter(frames, 10.0, width=1080, height=1920)
 
     assert seen["contents"][:4] == ["t=0s", b"j", "t=2s", b"k"]
@@ -93,7 +90,7 @@ def test_thumbnails_are_the_frame_with_each_concepts_text(claude, monkeypatch, t
                 {"text": "", "text_position": "right", "text_color": "white", "scene": "s", "why": "b"}]
     monkeypatch.setattr(thumbnail, "plan_thumbnail_concepts", lambda *a, **k: concepts)
 
-    out = thumbnail.generate_thumbnail(None, "title", "sess", count=2,
+    out = thumbnail.generate_thumbnail("title", "sess", count=2,
                                        frame_reference={"path": str(frame)})
 
     assert [t["text"] for t in out] == ["STOP HOURLY", ""]
@@ -101,4 +98,4 @@ def test_thumbnails_are_the_frame_with_each_concepts_text(claude, monkeypatch, t
         img = Image.open(tmp_path / "output" / "thumbnails" / "sess" / t["url"].rsplit("/", 1)[1])
         assert img.size == (1280, 720)
     with pytest.raises(RuntimeError, match="Pick a frame"):
-        thumbnail.generate_thumbnail(None, "title", "sess", count=1)
+        thumbnail.generate_thumbnail("title", "sess", count=1)

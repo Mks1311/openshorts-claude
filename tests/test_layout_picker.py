@@ -82,20 +82,17 @@ class TestApply:
 class TestPick:
     def test_disabled_picker_never_calls_out(self, monkeypatch):
         monkeypatch.setattr(layout_picker, "ENABLED", False)
-        monkeypatch.setenv("GEMINI_API_KEY", "x")
-        assert pick("video.mp4", 60) == "none"
-
-    def test_missing_api_key_degrades_to_none(self, monkeypatch):
-        monkeypatch.setattr(layout_picker, "ENABLED", True)
-        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         assert pick("video.mp4", 60) == "none"
 
     def test_a_failed_call_degrades_to_none(self, monkeypatch):
-        # Import failure inside pick() stands in for any API error; the job
-        # must keep rendering with today's routing rather than die.
+        # A failed model call must keep today's routing rather than kill the job.
+        import llm_backend
         monkeypatch.setattr(layout_picker, "ENABLED", True)
-        monkeypatch.setenv("GEMINI_API_KEY", "x")
-        monkeypatch.setitem(sys.modules, "google.genai", None)
+        monkeypatch.setattr(layout_picker, "sample_frames", lambda *a, **k: [b"jpg"])
+
+        def broken(contents, schema):
+            raise RuntimeError("claude CLI error (status 529)")
+        monkeypatch.setattr(llm_backend, "ask_frames", broken)
         assert pick("video.mp4", 60) == "none"
 
 
@@ -119,7 +116,6 @@ class TestSampleFrames:
 
     def test_no_frames_degrades_to_none(self, monkeypatch):
         monkeypatch.setattr(layout_picker, "ENABLED", True)
-        monkeypatch.setenv("GEMINI_API_KEY", "x")
         monkeypatch.setattr(layout_picker, "sample_frames", lambda *a, **k: [])
         assert pick("video.mp4", 60) == "none"
 

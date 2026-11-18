@@ -2,13 +2,9 @@ import os
 import json
 import re
 import subprocess
-import time
 from typing import List
-from google import genai
-from google.genai import types
 from pydantic import BaseModel
 
-import gemini_worker
 from edit_builder import build_filter_string
 from ffmpeg_utils import video_encode_args, QUALITY, METADATA_SCRUB
 
@@ -25,21 +21,13 @@ class EditPlan(BaseModel):
     edits: List[EditDecision]
 
 
-# With Claude the editor sees frames, not video: one every EDIT_FRAME_STEP s
-# (a clip is 15-90 s, so 8-45 frames) next to the word-timed transcript.
+# Claude sees frames, not video: one every EDIT_FRAME_STEP s (a clip is
+# 15-90 s, so 8-45 frames) next to the word-timed transcript.
 EDIT_FRAME_STEP = 2.0
 
 
 class VideoEditor:
-    def __init__(self, api_key):
-        import llm_backend
-        # client None = Claude (LLM_PROVIDER=claude) through the headless CLI.
-        self.client = None if llm_backend.provider() == "claude" else genai.Client(api_key=api_key)
-        self.model_name = (
-            os.environ.get("GEMINI_MODEL_EDITOR")
-            or os.environ.get("GEMINI_MODEL")
-            or "gemini-3.1-flash-lite"
-        )
+    """Edit plans for a clip from Claude, rendered by edit_builder/ffmpeg."""
 
     def _ask_claude(self, frames, prompt, schema):
         """Timestamped frames + prompt to Claude: the parsed dict with a schema, else the text."""
@@ -48,67 +36,19 @@ class VideoEditor:
         return claude_cli.ask(frame_sampler.timed(frames) + [prompt], schema,
                               model=claude_cli.VISION_MODEL)[0]
 
-    def upload_video(self, video_path):
-        """Uploads video to Gemini File API. With Claude, samples timestamped
-        frames instead: nothing leaves the machine but those frames."""
-        if self.client is None:
-            import frame_sampler
-            if not os.path.exists(video_path):
-                raise FileNotFoundError(f"Video file not found: {video_path}")
-            frames = frame_sampler.jpegs_every(video_path, 0, 24 * 3600, EDIT_FRAME_STEP)
-            if not frames:
-                raise RuntimeError(f"Could not read frames from {video_path}")
-            return frames
-        print(f"📤 Uploading {video_path} to Gemini...")
-        
-        # Ensure we are passing a path that exists
+    def sample_frames(self, video_path):
+        """The clip as timestamped frames, what the edit plans are asked over:
+        nothing leaves the machine but those frames."""
+        import frame_sampler
         if not os.path.exists(video_path):
             raise FileNotFoundError(f"Video file not found: {video_path}")
-            
-        # Using 'file' keyword instead of 'path'
-        try:
-            file_upload = gemini_worker.upload_media(self.client, video_path)
-        except Exception as e:
-            print(f"❌ Gemini Upload Error: {e}")
-            raise e
-        
-        # Wait for processing
-        print("⏳ Waiting for video processing by Gemini...")
-        deadline = time.time() + 120
-        while True:
-            file_info = self.client.files.get(name=file_upload.name)
-            state = getattr(file_info, "state", file_info)
-            state_name = str(getattr(state, "name", state)).upper()
-            if state_name == "ACTIVE":
-                print("✅ Video processed and ready.")
-                return file_upload
-            if state_name == "FAILED":
-                raise Exception("Video processing failed by Gemini.")
-            if time.time() > deadline:
-                raise TimeoutError("Gemini file processing timed out after 120s.")
-            time.sleep(2)
-
-    def delete_uploaded(self, video_file_obj):
-        """Remove an uploaded clip from the Gemini Files API.
-
-        The upload is a full copy of the user's video on Google's servers, kept
-        there for 48 h if nobody deletes it. The effects passes need it for one
-        request; every caller must drop it in a ``finally`` right after, so the
-        privacy policy's "we do not leave your footage with the model provider"
-        describes the code. Best-effort: an editing job must not fail because
-        the cleanup call did.
-        """
-        name = getattr(video_file_obj, "name", None)
-        if not name or self.client is None:
-            return
-        try:
-            self.client.files.delete(name=name)
-        except Exception as e:
-            print(f"⚠️ Could not delete {name} from Gemini Files ({e}) — "
-                  f"it expires there in 48 h.")
+        frames = frame_sampler.jpegs_every(video_path, 0, 24 * 3600, EDIT_FRAME_STEP)
+        if not frames:
+            raise RuntimeError(f"Could not read frames from {video_path}")
+        return frames
 
     def get_ffmpeg_filter(self, video_file_obj, duration, fps=30, width=None, height=None, transcript=None, has_captions=False):
-        """Asks Gemini for an edit decision list, then builds the FFmpeg filter
+        """Asks Claude for an edit decision list, then builds the FFmpeg filter
         deterministically (edit_builder) so syntax and zoom limits are always safe."""
         if width is None or height is None:
             # Keep prompt usable even if caller didn't pass dimensions.
@@ -154,13 +94,8 @@ class VideoEditor:
         If no effects genuinely improve the video, return {{"edits": []}}.
         """
 
-        if self.client is None:
-            print("🤖 Asking Claude for an edit decision list...")
-            raw_edits = self._ask_claude(video_file_obj, prompt, EditPlan)["edits"]
-        else:
-            raw_edits = self._gemini_edits(video_file_obj, prompt)
-        if raw_edits is None:
-            return None
+        print("🤖 Asking Claude for an edit decision list...")
+        raw_edits = self._ask_claude(video_file_obj, prompt, EditPlan)["edits"]
 
         filter_string, applied = build_filter_string(
             raw_edits, duration=duration, fps=fps, width=width, height=height,
@@ -172,47 +107,8 @@ class VideoEditor:
         print(f"🎯 Applying {len(applied)} edits: " + ", ".join(f"{e['type']}@{e['start']:.1f}s" for e in applied))
         return {"filter_string": filter_string, "edits": applied}
 
-    def _gemini_edits(self, video_file_obj, prompt):
-        """The edit list from Gemini, or None on a hard parse failure."""
-        print("🤖 Asking Gemini for an edit decision list...")
-        # Low media resolution: Gemini samples at 1 FPS and normalizes frames to
-        # fixed token sizes, so "low" (~70 tokens/frame) cuts video-input cost
-        # without hurting motion/scene understanding. Fall back to defaults if
-        # the SDK or model rejects the option.
-        try:
-            config = types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=EditPlan,
-                media_resolution=types.MediaResolution.MEDIA_RESOLUTION_LOW,
-            )
-        except Exception:
-            config = types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=EditPlan,
-            )
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=[video_file_obj, prompt],
-                config=config,
-            )
-        except Exception as e:
-            if getattr(config, "media_resolution", None) is None:
-                raise
-            print(f"⚠️ media_resolution=low rejected ({e}); retrying with defaults...")
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=[video_file_obj, prompt],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=EditPlan,
-                ),
-            )
-
-        return self._extract_edits(response)
-
     def get_effects_config(self, video_file_obj, duration, fps=30, width=None, height=None, transcript=None):
-        """Asks Gemini for a structured EffectsConfig JSON for Remotion rendering."""
+        """Asks Claude for a structured EffectsConfig JSON for Remotion rendering."""
         if width is None or height is None:
             width, height = 1080, 1920
 
@@ -268,18 +164,8 @@ class VideoEditor:
         }}
         """
 
-        if self.client is None:
-            print("🤖 Asking Claude for Remotion effects config...")
-            raw = self._ask_claude(video_file_obj, prompt, None)
-        else:
-            print("🤖 Asking Gemini for Remotion effects config...")
-            raw = self.client.models.generate_content(
-                model=self.model_name,
-                contents=[video_file_obj, prompt],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json"
-                )
-            ).text
+        print("🤖 Asking Claude for Remotion effects config...")
+        raw = self._ask_claude(video_file_obj, prompt, None)
 
         print(f"🔍 DEBUG: Raw Response:\n{raw}")
 
@@ -309,38 +195,6 @@ class VideoEditor:
         except json.JSONDecodeError:
             print(f"❌ Failed to parse effects config JSON: {raw}")
             return None
-
-    @staticmethod
-    def _extract_edits(response):
-        """Pull the edit list out of a Gemini response (parsed schema preferred,
-        raw-JSON fallback). Returns a list of dicts, or None on hard failure."""
-        parsed = getattr(response, "parsed", None)
-        if parsed is not None:
-            try:
-                return [edit.model_dump() for edit in parsed.edits]
-            except Exception:
-                pass
-
-        text = (getattr(response, "text", None) or "").strip()
-        print(f"🔍 DEBUG: Gemini Raw Response:\n{text}")
-        if text.startswith("```json"):
-            text = text[7:]
-        elif text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
-        start_idx = text.find('{')
-        end_idx = text.rfind('}')
-        if start_idx != -1 and end_idx != -1:
-            text = text[start_idx:end_idx + 1]
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError:
-            print(f"❌ Failed to parse edit plan JSON: {text[:500]}")
-            return None
-        edits = data.get("edits") if isinstance(data, dict) else None
-        return edits if isinstance(edits, list) else []
 
     @staticmethod
     def _split_filter_chain(filter_string: str) -> list[str]:
@@ -375,7 +229,7 @@ class VideoEditor:
     @staticmethod
     def _sanitize_filter_string(filter_string: str) -> str:
         """
-        Best-effort sanitizer for Gemini-generated FFmpeg expressions.
+        Best-effort sanitizer for model-generated FFmpeg expressions.
         Converts comparison operators (t<3, on>=75, etc.) into FFmpeg expr functions (lt(), gte(), ...),
         which are far more reliably parsed across FFmpeg builds.
         """
@@ -428,7 +282,7 @@ class VideoEditor:
     def _test_filter(input_path, filter_string, env):
         """Dry-run the filter on the first 2 seconds (no output written).
 
-        Catches broken Gemini-generated filter syntax in seconds instead of
+        Catches broken model-generated filter syntax in seconds instead of
         failing after a full-length encode. Returns (ok, stderr_tail)."""
         cmd = [
             'ffmpeg', '-v', 'error', '-t', '2',
@@ -447,43 +301,6 @@ class VideoEditor:
             return True, ""
         stderr_text = (result.stderr or b"").decode(errors="replace")
         return False, stderr_text[-1500:]
-
-    def _repair_filter(self, filter_string, error_text, width, height):
-        """One self-repair round-trip: show Gemini the FFmpeg error and ask for
-        a corrected filter string. Returns the new string or None."""
-        if not self.client:
-            return None
-        prompt = f"""
-        The following FFmpeg -vf filter string you generated fails to run.
-
-        FILTER:
-        {filter_string}
-
-        FFMPEG ERROR:
-        {error_text}
-
-        Fix the filter. Keep the same creative intent, obey the same rules as before:
-        - exact output resolution {width}x{height} (zoompan must set s={width}x{height}),
-        - no bare comparison operators (use between/lt/lte/gt/gte),
-        - expression values in single quotes.
-        Output JSON only: {{"filter_string": "..."}}
-        """
-        try:
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json"),
-            )
-            text = (response.text or "").strip()
-            start_idx = text.find('{')
-            end_idx = text.rfind('}')
-            if start_idx != -1 and end_idx != -1:
-                text = text[start_idx:end_idx + 1]
-            repaired = json.loads(text).get("filter_string")
-            return repaired if isinstance(repaired, str) and repaired.strip() else None
-        except Exception as e:
-            print(f"⚠️ Filter self-repair failed: {e}")
-            return None
 
     def apply_edits(self, input_path, output_path, filter_data):
         """Executes FFmpeg with the generated filter."""
@@ -536,27 +353,10 @@ class VideoEditor:
         # (C.UTF-8 is the safe one there). No credentials: ffmpeg needs none.
         env = self._ffmpeg_env()
 
-        # Dry-run the filter on 2 seconds before committing to a full encode;
-        # on failure, give Gemini one self-repair attempt with the real error.
+        # Dry-run the filter on 2 seconds before committing to a full encode.
         ok, error_text = self._test_filter(input_path, filter_string, env)
         if not ok:
-            print(f"⚠️ AI filter failed dry-run: {error_text}")
-            repaired = self._repair_filter(filter_string, error_text, w or 1080, h or 1920)
-            if repaired and self._touches_files(repaired):
-                print("⚠️ The repaired filter names a file or a command filter. Dropped.")
-                repaired = None
-            if repaired:
-                repaired = self._sanitize_filter_string(repaired)
-                if w and h:
-                    repaired = self._enforce_zoompan_output_size(repaired, w, h)
-                    if "setsar=" not in repaired:
-                        repaired = f"{repaired},setsar=1"
-                ok, error_text = self._test_filter(input_path, repaired, env)
-                if ok:
-                    print("🔧 Self-repaired AI filter passed dry-run.")
-                    filter_string = repaired
-            if not ok:
-                raise RuntimeError(f"AI filter failed validation even after self-repair: {error_text}")
+            raise RuntimeError(f"AI filter failed validation: {error_text}")
 
         print(f"🎬 Executing AI Filter: {filter_string}")
 

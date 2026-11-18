@@ -10,7 +10,7 @@ bottom of every cut clip before it is reframed (``crop_filter``). Cropping from
 the bottom keeps the top-left origin, so every face box and crop position the
 reframer computes is unchanged; only the height shrinks.
 
-The question goes to Gemini on the same 12 stills at 1024px the layout picker
+The question goes to Claude on the same 12 stills at 1024px the layout picker
 uses, asked once per source video. It is a separate call on purpose: the layout
 prompt's accuracy was measured as is, and a second question in its schema
 would change what was measured. Per frame, the model gives the top of the
@@ -101,8 +101,6 @@ def detect(video_path, frames=None):
     if not ENABLED:
         return None
     import llm_backend
-    if not llm_backend.sees():
-        return None
     try:
         from pydantic import BaseModel
 

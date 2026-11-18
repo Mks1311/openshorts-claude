@@ -34,9 +34,6 @@ def test_crop_keeps_the_top_with_an_even_height():
     assert crop_filter(0.792) == "crop=iw:trunc(ih*0.7920/2)*2:0:0"
 
 
-def test_disabled_or_keyless_check_never_calls_out(monkeypatch):
+def test_disabled_check_never_calls_out(monkeypatch):
     monkeypatch.setattr(burned_subtitles, "ENABLED", False)
-    assert burned_subtitles.detect("v.mp4") is None
-    monkeypatch.setattr(burned_subtitles, "ENABLED", True)
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     assert burned_subtitles.detect("v.mp4") is None

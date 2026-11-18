@@ -1,4 +1,4 @@
-"""Ask Gemini which layout a video needs, once per video.
+"""Ask Claude which layout a video needs, once per video.
 
 The four previous attempts at this problem asked the model (or a pixel
 heuristic) to MEASURE something — edge density, MSER text density, what fraction
@@ -20,11 +20,8 @@ the same video scored 1% and 97% coverage on consecutive runs. The variance was
 in asking for a continuous measurement, not in the model: a categorical choice
 between closed options is stable.
 
-It samples FRAMES instead of uploading the video. Gemini bills video at ~300
-tokens per second, so an hour of source is ~1.08M tokens — past a 1M context
-window before it starts — and means pushing a 1-2GB upload to get back one word.
-This pipeline ingests hour-long podcasts, so that scales badly in exactly the
-normal case. Twelve stills cost ~3k tokens whatever the source runs to.
+It samples FRAMES instead of sending the video: twelve stills cost a few
+thousand tokens whatever the source runs to.
 
 Measured on the same 48 clips (whole video vs sampled frames):
 
@@ -191,7 +188,7 @@ def sample_frames(video_path, n=None, width=None):
 
 
 def pick(video_path, video_duration):
-    """The layout Gemini picks for this video, or "none" on any failure.
+    """The layout Claude picks for this video, or "none" on any failure.
 
     Never raises: a missing answer has to degrade to today's routing rather
     than break the job.
@@ -199,14 +196,12 @@ def pick(video_path, video_duration):
     if not ENABLED:
         return "none"
     import llm_backend
-    if not llm_backend.sees():
-        return "none"
 
     print("🎛️  Choosing a layout for this video…")
     try:
         # Inside the try on purpose: the contract above is that this never
         # raises, and an unimportable SDK is just one more reason to fall back.
-        import gemini_worker
+        import llm_prompts
 
         frames = sample_frames(video_path)
         if not frames:
@@ -214,7 +209,7 @@ def pick(video_path, video_duration):
             return "none"
 
         answer = llm_backend.ask_frames(
-            list(frames) + [gemini_worker.LAYOUT_CHOICE_PROMPT], gemini_worker.LayoutChoice)
+            list(frames) + [llm_prompts.LAYOUT_CHOICE_PROMPT], llm_prompts.LayoutChoice)
     except Exception as e:
         print(f"   ⚠️ Layout choice failed ({e}) — keeping the default layout.")
         return "none"

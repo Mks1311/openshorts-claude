@@ -10,8 +10,7 @@ Tools don't reimplement anything: each one is an in-process HTTP call back into
 this same app (httpx ASGITransport) with the caller's auth headers forwarded.
 Cloud mode therefore meters, gates and scopes agent calls exactly like
 dashboard calls — an ``osk_`` API key IS the user (see cloud/api_keys.py).
-Self-host keeps its BYOK semantics: no key required, ``X-Gemini-Key`` /
-env fallbacks apply unchanged.
+Self-host needs no key: every model call runs on the server's claude CLI.
 
 Connect with any MCP client, e.g.:
     claude mcp add --transport http openshorts https://mcp.openshorts.app/mcp \
@@ -61,7 +60,7 @@ INSTRUCTIONS = (
 
 # Headers an MCP caller may use to authenticate / bring their own keys; they are
 # forwarded verbatim to the internal endpoints so every existing auth path works.
-_FORWARD_HEADERS = ("authorization", "x-api-key", "x-gemini-key", "x-upload-post-key")
+_FORWARD_HEADERS = ("authorization", "x-api-key", "x-upload-post-key")
 
 _LOG_TAIL = 10  # status logs are for humans; agents only need the tail
 

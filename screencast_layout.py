@@ -26,7 +26,7 @@ What is different here is the question asked and what the answer is used for.
     speaker, which is a reasonable frame even when the trigger was wrong.
 
 Off by default (``SCREENCAST_LAYOUT=1``, set per job by ``layouts=["screencast"]``
-or by the layout picker). Which shots show a screen is asked of Gemini per clip
+or by the layout picker). Which shots show a screen is asked of Claude per clip
 (``detect_content_ranges``, one still per shot); without an answer the scenes
 the face classifier sent to GENERAL are taken as the screen (``fallback_ranges``),
 because the job was declared a screencast and GENERAL is the one layout that
@@ -367,14 +367,11 @@ def detect_content_ranges(video_path, scenes, fps):
     if not scenes:
         return None
     import llm_backend
-    if not llm_backend.sees():
-        print("   ⚠️ Screen check needs LLM_PROVIDER=claude or GEMINI_API_KEY.")
-        return None
 
     asked = shots_to_ask(scenes)
     print(f"   🔎 Screen check on {len(asked)} shot(s)…")
     try:
-        import gemini_worker
+        import llm_prompts
 
         frames = _shot_frames(video_path, scenes, asked)
         keep = [(i, jpg) for i, jpg in zip(asked, frames) if jpg]
@@ -385,8 +382,8 @@ def detect_content_ranges(video_path, scenes, fps):
         for n, (_, jpg) in enumerate(keep):
             parts.append(f"Shot {n}:")
             parts.append(jpg)
-        raw = llm_backend.ask_frames(parts + [gemini_worker.SHOT_CONTENT_PROMPT],
-                                     gemini_worker.ShotContentResponse).get("shots") or []
+        raw = llm_backend.ask_frames(parts + [llm_prompts.SHOT_CONTENT_PROMPT],
+                                     llm_prompts.ShotContentResponse).get("shots") or []
     except Exception as e:
         print(f"   ⚠️ Screen check failed ({e}).")
         return None

@@ -9,14 +9,12 @@ viewer is watching an MCP connector being configured.
 
 So, for those clips only, once the render has said which stretches live on
 the screen (the ``<clip>.layout.json`` sidecar), three frames from those
-stretches at 1024px plus the clip's own transcript go to Gemini and the hook
+stretches at 1024px plus the clip's own transcript go to Claude and the hook
 and title are rewritten to name what is shown. Same principle as the layout
 picker: a few frames at a legible resolution answering one concrete
 question. About 3k tokens per clip.
 
-Frames need a model that can see, so this is Gemini-only: with just a local
-LLM (``LLM_BASE_URL``) the function returns None and the transcript-based
-hook stands. Never raises: a hook problem must never cost the clip.
+Never raises: a hook problem must never cost the clip.
 """
 from __future__ import annotations
 
@@ -122,29 +120,24 @@ def frames_at(video_path, times, width=None):
 
 def _ask_model(frames, prompt):
     """One vision call; returns the parsed dict. Split out so tests can stub it."""
-    import gemini_worker
+    import llm_prompts
     import llm_backend
-    return llm_backend.ask_frames(list(frames) + [prompt], gemini_worker.GroundedHook)
+    return llm_backend.ask_frames(list(frames) + [prompt], llm_prompts.GroundedHook)
 
 
 def reground(clip_path, clip, transcript, start, end) -> Optional[dict]:
     """Rewrite ``clip['viral_hook_text']`` / ``video_title_for_youtube_short``
     in place from the clip's frames. Returns what changed (also stored under
     ``clip['hook_grounding']``), or None when skipped or failed."""
-    import llm_backend
-    if not llm_backend.sees():
-        print("   🪝 Hook grounding skipped: needs LLM_PROVIDER=claude or a Gemini key "
-              "(frames), keeping the transcript hook.")
-        return None
     try:
-        import gemini_worker
+        import llm_prompts
 
         times = sample_times(clip.get("layout_ranges"), float(end) - float(start))
         frames = frames_at(clip_path, times)
         if not frames:
             return None
         language = str((transcript or {}).get("language") or "unknown")
-        prompt = gemini_worker.GROUNDED_HOOK_PROMPT.format(
+        prompt = llm_prompts.GROUNDED_HOOK_PROMPT.format(
             language=language,
             current_hook=clip.get("viral_hook_text") or "",
             current_title=clip.get("video_title_for_youtube_short") or "",

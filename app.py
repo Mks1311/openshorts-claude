@@ -282,9 +282,9 @@ def payment_required(error: str, message: str, **extra) -> HTTPException:
 
 
 def _model_missing(api_key) -> bool:
-    """No Gemini key, and no self-host Claude CLI (LLM_PROVIDER=claude) to
-    answer instead (text, frames, edit plans). Image generation still needs Gemini."""
-    return not api_key and not (llm_backend.provider() == "claude" and not BILLING_ENABLED)
+    """Cloud mode still gates model calls on an entitlement (``resolve_gemini``);
+    a self-host always has the server's claude CLI."""
+    return BILLING_ENABLED and not api_key
 
 
 def gemini_missing_error():
@@ -5333,11 +5333,7 @@ async def process_endpoint(
     source_end: Optional[str] = Form(None),
 ):
     api_key = await resolve_gemini(request)
-    if not api_key and not (llm_backend.active() and not BILLING_ENABLED):
-        # Self-host with an OpenAI-compatible server configured needs no
-        # Google key for the core pipeline: the moment picker runs there and
-        # the frame-based stages degrade on their own (layout_picker returns
-        # "none", silent videos fail with a message that says why).
+    if _model_missing(api_key):
         raise gemini_missing_error()
 
     ack_flag = str(acknowledged).lower() in ("1", "true", "yes")
@@ -6333,7 +6329,7 @@ async def edit_clip(
         # Run editing in a thread to avoid blocking main loop
         # Since VideoEditor uses blocking calls (subprocess, API wait)
         def run_edit():
-            editor = VideoEditor(api_key=final_api_key)
+            editor = VideoEditor()
             
             # SAFE FILE RENAMING STRATEGY (Avoid UnicodeEncodeError in Docker)
             # Create a safe ASCII filename in the same directory. Unique per
@@ -6353,7 +6349,7 @@ async def edit_clip(
             
             try:
                 # 1. Upload (using safe path)
-                vid_file = editor.upload_video(safe_input_path)
+                vid_file = editor.sample_frames(safe_input_path)
                 
                 # 2. Get duration
                 import cv2
@@ -7028,9 +7024,6 @@ async def _set_clip_mode_locked(req: ClipModeRequest, request: Request, job):
         minutes = _cloud_config.EDITOR_ACTION_MINUTES if BILLING_ENABLED else 0
         reservation_id = await reserve_managed_action(request, minutes, req.job_id, "pro")
         layers = _clip_layers(clip, had_hook, had_captions)
-        # Keyword titles need a model: the caller's entitlement decides, as
-        # for every other Gemini-backed action. None just means no titles.
-        api_key = await resolve_gemini(request)
         hook_seconds = 0.0
         if had_hook:
             try:
@@ -7041,7 +7034,7 @@ async def _set_clip_mode_locked(req: ClipModeRequest, request: Request, job):
             new_base, updates = await loop.run_in_executor(
                 None, lambda: pro_mode.convert(
                     base_path, clean_name, clip, data.get('transcript') or {},
-                    wait=PRO_WAIT_SECONDS, api_key=api_key, hook_seconds=hook_seconds,
+                    wait=PRO_WAIT_SECONDS, hook_seconds=hook_seconds,
                     caption_style=CAPTION_PRESETS["cine"] if had_captions else None))
         except Exception as e:
             if reservation_id:
@@ -7614,7 +7607,7 @@ async def generate_effects_config(
             raise HTTPException(status_code=404, detail=f"Video file not found: {input_path}")
 
         def run_effects_generation():
-            editor = VideoEditor(api_key=final_api_key)
+            editor = VideoEditor()
 
             # Create safe ASCII filename to avoid encoding issues
             safe_filename = f"temp_effects_{req.job_id}.mp4"
@@ -7623,7 +7616,7 @@ async def generate_effects_config(
 
             try:
                 # Upload video to Gemini
-                vid_file = editor.upload_video(safe_input_path)
+                vid_file = editor.sample_frames(safe_input_path)
 
                 # Get video metadata via ffprobe
                 probe_cmd = [
@@ -9164,7 +9157,7 @@ async def thumbnail_analyze(
 
         # Run analysis in thread pool (skips Whisper if pre_transcript is available)
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, analyze_video_for_titles, api_key, video_path, pre_transcript)
+        result = await loop.run_in_executor(None, analyze_video_for_titles, video_path, pre_transcript)
 
         # Store/update session context
         if session_id not in thumbnail_sessions:
@@ -9309,7 +9302,6 @@ async def thumbnail_titles(
         result = await loop.run_in_executor(
             None,
             refine_titles,
-            api_key,
             session["context"],
             req.message,
             session["conversation"]
@@ -9413,7 +9405,7 @@ async def thumbnail_generate(
                 text_hint = texts[titles.index(title)]
             if frame:
                 frame_reference = next((f for f in session.get("frames", []) if f["url"] == frame), None)
-            if frame_reference is None and not face_path and llm_backend.provider() == "claude":
+            if frame_reference is None and not face_path:
                 # No image model to invent a scene: build on the video's first face frame.
                 frame_reference = next(iter(session.get("frames") or []), None)
 
@@ -9421,7 +9413,7 @@ async def thumbnail_generate(
         thumbnails = await loop.run_in_executor(
             None,
             functools.partial(
-                generate_thumbnail, api_key, title, session_id, face_path, bg_path,
+                generate_thumbnail, title, session_id, face_path, bg_path,
                 extra_prompt, count, video_context, burn_text=burn_text,
                 thumbnail_text_hint=text_hint, language=language,
                 frame_reference=frame_reference),
@@ -9509,7 +9501,6 @@ async def thumbnail_describe(
         result = await loop.run_in_executor(
             None,
             generate_youtube_description,
-            api_key,
             req.title,
             segments,
             session.get("language", "en"),

@@ -7,7 +7,7 @@ detail pass only ever reads the transcript.
 """
 import pytest
 
-import gemini_worker
+import llm_prompts
 import hook_grounding as hg
 
 
@@ -77,7 +77,6 @@ def test_clip_words_uses_word_timestamps_and_falls_back_to_segment_text():
 
 @pytest.fixture
 def gemini(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "k")
     monkeypatch.setattr(hg, "frames_at", lambda path, times, width=None: [b"jpg"] * len(times))
     seen = {}
 
@@ -111,15 +110,7 @@ def test_rewrites_hook_and_title_and_keeps_the_originals(gemini):
     assert "TRANSCRIPT_LANGUAGE: es" in gemini["prompt"]
 
 
-def test_without_a_gemini_key_the_transcript_hook_stands(monkeypatch):
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    clip = {"viral_hook_text": "old", "layout_ranges": SCREEN}
-    assert hg.reground("clip.mp4", clip, {"segments": []}, 0, 30) is None
-    assert clip["viral_hook_text"] == "old" and "hook_grounding" not in clip
-
-
 def test_model_failure_never_touches_the_clip(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "k")
     monkeypatch.setattr(hg, "frames_at", lambda *a, **k: [b"jpg"])
     monkeypatch.setattr(hg, "_ask_model", lambda *a: (_ for _ in ()).throw(RuntimeError("503")))
     clip = {"viral_hook_text": "old", "layout_ranges": SCREEN}
@@ -128,7 +119,6 @@ def test_model_failure_never_touches_the_clip(monkeypatch):
 
 
 def test_empty_answer_keeps_the_old_hook(monkeypatch):
-    monkeypatch.setenv("GEMINI_API_KEY", "k")
     monkeypatch.setattr(hg, "frames_at", lambda *a, **k: [b"jpg"])
     monkeypatch.setattr(hg, "_ask_model", lambda *a: {"viral_hook_text": ""})
     clip = {"viral_hook_text": "old", "layout_ranges": SCREEN}
@@ -139,7 +129,7 @@ def test_empty_answer_keeps_the_old_hook(monkeypatch):
 # --- the cheap half: the detail prompt itself -------------------------------
 
 def test_detail_prompt_forbids_topic_summary_hooks():
-    assert "ABOUT THIS MOMENT, NOT THE VIDEO" in gemini_worker.DETAIL_PROMPT_TEMPLATE
-    assert "{on_screen" not in gemini_worker.DETAIL_PROMPT_TEMPLATE  # no stray placeholders
-    gemini_worker.GROUNDED_HOOK_PROMPT.format(
+    assert "ABOUT THIS MOMENT, NOT THE VIDEO" in llm_prompts.DETAIL_PROMPT_TEMPLATE
+    assert "{on_screen" not in llm_prompts.DETAIL_PROMPT_TEMPLATE  # no stray placeholders
+    llm_prompts.GROUNDED_HOOK_PROMPT.format(
         language="es", current_hook="a", current_title="b", transcript="c")

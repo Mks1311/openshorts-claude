@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Upload, Sparkles, Youtube, Instagram, Share2, ChevronDown, Check, Activity, LayoutDashboard, Settings, Plus, History, X, Terminal, Shield, Image, Globe, RotateCcw, Calendar, AlertTriangle, KeyRound, Bot, Users, Smartphone, ExternalLink, Copy, CheckCircle2, Mail, Loader2, Download, Menu, Lock, Rocket } from 'lucide-react';
-import KeyInput from './components/KeyInput';
 import MediaInput from './components/MediaInput';
 import McpConnectCard from './components/McpConnectCard';
 import ResultCard from './components/ResultCard';
@@ -324,7 +323,6 @@ function App() {
   // the ephemeral local /videos/ files have been cleaned up (e.g. after a reload).
   const [durableClips, setDurableClips] = useState({});
 
-  const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_key') || '');
   // Social API State - Load encrypted or plain
   const [uploadPostKey, setUploadPostKey] = useState(() => {
     const stored = localStorage.getItem('uploadPostKey_v3');
@@ -355,7 +353,6 @@ function App() {
     try { return localStorage.getItem('os_autopilot_nudge_dismissed') === '1'; } catch (_) { return false; }
   });
   const [autopilotOn, setAutopilotOn] = useState(false);
-  const [showKeyModal, setShowKeyModal] = useState(false);
   const [jobId, setJobId] = useState(null);
   const [status, setStatus] = useState('idle'); // idle, processing, complete, error
   const [results, setResults] = useState(null);
@@ -807,12 +804,6 @@ function App() {
   }, [jobId, status, results, activeTab, noSource, projectState]);
 
   useEffect(() => {
-    // Encrypt Gemini Key too for consistency if desired, but user asked specifically about Social integration not saving well.
-    // For now keeping gemini plain for compatibility unless requested.
-    if (apiKey) localStorage.setItem('gemini_key', apiKey);
-  }, [apiKey]);
-
-  useEffect(() => {
     if (uploadPostKey) {
       localStorage.setItem('uploadPostKey_v3', encrypt(uploadPostKey));
     }
@@ -962,15 +953,6 @@ function App() {
     }
   };
 
-  // Hosted is paid-only (no BYOK core). Self-host uses BYOK keys.
-  // `keysMissing` now means "self-host BYOK keys missing" — it never fires on hosted.
-  // A self-hosted server running the moment picker on a local LLM
-  // (LLM_BASE_URL) does not need a Gemini key for the core pipeline.
-  const geminiOk = !!apiKey || !!localLlm;
-  // Claude self-host: every model call runs on the server's signed-in claude CLI.
-  const claudeLlm = localLlm?.provider === 'claude';
-  // Upload-Post is only needed to post, never to make clips.
-  const keysMissing = !billingEnabled && !geminiOk;
   const needsPlan = billingEnabled && !isManaged;   // hosted, signed-out or no active plan/trial
 
   // Fresh sign-up: Clip Generator tutorial (AuthContext set os_show_clip_tutorial
@@ -1199,9 +1181,6 @@ function App() {
       // fall through the same gates.
       if (!isSignedIn) { stashPendingJob(data); setShowLogin(true); return; }
       if (!isManaged) { window.location.hash = '#/pricing'; return; }
-    } else if (keysMissing) {
-      setShowKeyModal(true);
-      return;
     }
     // Past every gate, so this request is really running: nothing left to resume.
     clearPendingJob();
@@ -1221,9 +1200,8 @@ function App() {
 
     try {
       let body;
-      // BYOK sends the Gemini header; managed users rely on the bearer token
-      // that apiFetch attaches automatically.
-      const headers = apiKey ? { 'X-Gemini-Key': apiKey } : {};
+      // apiFetch attaches the bearer token; no model key is ever sent.
+      const headers = {};
 
       // Advanced generation controls: only sent when the user set them, so the
       // default request stays byte-identical to the pre-feature one.
@@ -1673,52 +1651,9 @@ function App() {
             )}
             {billingEnabled && isSignedIn && <ProfileMenu onUpgrade={isManaged ? openUpsell : null} />}
 
-            {/* Hidden below sm: the standing banner underneath already says the
-                same thing, and two warnings in a 360px header is just noise. */}
-            {keysMissing && (
-              <button
-                onClick={() => (billingEnabled && !isSignedIn ? setShowLogin(true) : goToTab('settings'))}
-                className="badge-warn hover:brightness-125 transition-all hidden sm:inline-flex"
-                title="Configure API keys or choose a plan"
-              >
-                <AlertTriangle size={12} />
-                <span className="hidden md:inline">
-                  {!geminiOk && !uploadPostKey
-                    ? 'Gemini & Upload-Post keys missing'
-                    : !geminiOk
-                      ? 'Gemini API Key Missing'
-                      : 'Upload-Post API Key Missing'}
-                </span>
-                <span className="md:hidden">keys missing</span>
-              </button>
-            )}
           </div>
         </header>
 
-        {/* Persistent Missing Keys Banner — visible on every screen */}
-        {keysMissing && activeTab !== 'settings' && (
-          <div className="mx-3 sm:mx-6 mt-3 px-3.5 sm:px-4 py-3 bg-paper2 border border-rule rounded-card flex flex-wrap items-center justify-between gap-2.5 sm:gap-4 shrink-0 animate-fade">
-            <div className="flex items-start sm:items-center gap-2.5 sm:gap-3 text-sm text-ink2 min-w-0 flex-1">
-              <KeyRound size={16} className="shrink-0 text-warn mt-0.5 sm:mt-0" />
-              <div className="min-w-0">
-                <span className="font-medium text-ink">Required API keys missing.</span>{' '}
-                <span className="text-muted">
-                  {!geminiOk && !uploadPostKey
-                    ? 'Set your Gemini and Upload-Post API keys to use OpenShorts.'
-                    : !geminiOk
-                      ? 'Set your Gemini API key to use OpenShorts.'
-                      : 'Set your Upload-Post API key to use OpenShorts.'}
-                </span>
-              </div>
-            </div>
-            <button
-              onClick={() => goToTab('settings')}
-              className="btn-quiet px-3 py-1.5 text-xs shrink-0 w-full sm:w-auto"
-            >
-              Go to Settings
-            </button>
-          </div>
-        )}
 
         {/* Session Recovery Banner */}
         {sessionRecovered && (
@@ -1829,17 +1764,13 @@ function App() {
                 </div>
               ) : (
                 <>
-              {claudeLlm ? (
                 <div className="card p-4 sm:p-6">
                   <h2 className="text-base font-medium text-ink lowercase mb-2">AI model</h2>
                   <p className="text-xs text-muted leading-relaxed">
-                    Every AI step runs on Claude ({localLlm.model}) through the <code>claude</code> CLI
+                    Every AI step runs on Claude ({localLlm?.model || "sonnet"}) through the <code>claude</code> CLI
                     signed in on the server, on your Claude subscription. No API key needed.
                   </p>
                 </div>
-              ) : (
-                <KeyInput onKeySet={setApiKey} savedKey={apiKey} />
-              )}
 
               <div className="card p-4 sm:p-6 mt-8">
                 <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
@@ -2003,7 +1934,7 @@ function App() {
                     </div>
                     <h3 className="font-medium text-ink lowercase">2. AI clippers work</h3>
                     <p className="text-xs text-muted leading-relaxed">
-                      Whisper transcribes, Gemini 3 Flash spots viral beats, FFmpeg cuts each clip and adds a hook overlay.
+                      Whisper transcribes, Claude spots viral beats, FFmpeg cuts each clip and adds a hook overlay.
                     </p>
                   </div>
 
@@ -2059,7 +1990,7 @@ function App() {
                     </div>
                     <div className="flex items-start gap-2 text-ink2">
                       <Check size={16} className="text-brass shrink-0 mt-0.5" />
-                      <span>Gemini 3 Flash multimodal moment detection</span>
+                      <span>Claude moment detection, on transcript and frames</span>
                     </div>
                     <div className="flex items-start gap-2 text-ink2">
                       <Check size={16} className="text-brass shrink-0 mt-0.5" />
@@ -2119,7 +2050,6 @@ function App() {
 
           {activeTab === 'thumbnails' && (
             <ThumbnailStudio
-              geminiApiKey={apiKey}
               uploadPostKey={uploadPostKey}
               uploadUserId={uploadUserId}
               managed={isManaged}
@@ -2534,7 +2464,6 @@ function App() {
                           durable={durableClips[i]}
                           uploadPostKey={uploadPostKey}
                           uploadUserId={uploadUserId}
-                          geminiApiKey={apiKey}
                           elevenLabsKey={elevenLabsKey}
                           isManaged={isManaged}
                           connectedPlatforms={(userProfiles.find((p) => p.username === uploadUserId) || userProfiles[0])?.connected ?? null}
@@ -2577,99 +2506,6 @@ function App() {
         <MobileTabBar />
 
       </main>
-
-      {/* Missing API Key Modal */}
-      <Modal
-        isOpen={showKeyModal}
-        onClose={() => setShowKeyModal(false)}
-        eyebrow="SETUP"
-        title={!geminiOk && !uploadPostKey
-          ? 'Required API Keys Missing'
-          : !geminiOk
-            ? 'Gemini API Key Required'
-            : 'Upload-Post API Key Required'}
-        footer={
-          <div className="flex gap-3">
-            <button
-              onClick={() => setShowKeyModal(false)}
-              className="btn-ghost flex-1 px-4 py-2 text-sm"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => { setShowKeyModal(false); goToTab('settings'); }}
-              className="btn-primary flex-1 px-4 py-2 text-sm"
-            >
-              Go to Settings
-            </button>
-          </div>
-        }
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-muted">
-            OpenShorts needs both a <strong className="text-ink2">Gemini</strong> API key and an <strong className="text-ink2">Upload-Post</strong> API key. Both have free tiers.
-          </p>
-
-          {/* Gemini block */}
-          <div className={`rounded-input p-4 space-y-2 border ${!apiKey ? 'border-rule2' : 'border-rule opacity-70'}`}>
-            <p className="text-xs font-medium text-ink flex items-center gap-2">
-              {apiKey ? <Check size={12} className="text-ok" /> : <AlertTriangle size={12} className="text-warn" />}
-              Gemini API Key {apiKey && <span className="text-ok">— set</span>}
-            </p>
-            {!apiKey && (
-              <>
-                <ol className="text-xs text-muted space-y-1 list-decimal list-inside">
-                  <li>Go to <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-brass underline">aistudio.google.com/app/apikey</a></li>
-                  <li>Sign in with your Google account</li>
-                  <li>Click "Create API Key"</li>
-                  <li>Copy the key and paste it below</li>
-                </ol>
-                <input
-                  type="text"
-                  placeholder="Paste your Gemini API key here..."
-                  className="input-field"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && e.target.value.trim()) {
-                      setApiKey(e.target.value.trim());
-                    }
-                  }}
-                />
-              </>
-            )}
-          </div>
-
-          {/* Upload-Post block */}
-          <div className={`rounded-input p-4 space-y-2 border ${!uploadPostKey ? 'border-rule2' : 'border-rule opacity-70'}`}>
-            <p className="text-xs font-medium text-ink flex items-center gap-2">
-              {uploadPostKey ? <Check size={12} className="text-ok" /> : <AlertTriangle size={12} className="text-warn" />}
-              Upload-Post API Key {uploadPostKey && <span className="text-ok">— set</span>}
-            </p>
-            {!uploadPostKey && (
-              <>
-                <p className="text-xs text-muted">
-                  Required to publish your clips to TikTok, Instagram Reels, and YouTube Shorts. Free tier available, no credit card needed.
-                </p>
-                <ol className="text-xs text-muted space-y-1 list-decimal list-inside">
-                  <li>Register at <a href="https://app.upload-post.com/login" target="_blank" rel="noopener noreferrer" className="text-brass underline">app.upload-post.com</a></li>
-                  <li>Connect your TikTok, Instagram, or YouTube accounts</li>
-                  <li>Go to <a href="https://app.upload-post.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-brass underline">API Keys</a> and generate one</li>
-                  <li>Paste it below</li>
-                </ol>
-                <input
-                  type="text"
-                  placeholder="Paste your Upload-Post API key here..."
-                  className="input-field"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && e.target.value.trim()) {
-                      setUploadPostKey(e.target.value.trim());
-                    }
-                  }}
-                />
-              </>
-            )}
-          </div>
-        </div>
-      </Modal>
 
       <ScheduleWeekModal
         isOpen={showScheduleWeek}

@@ -3,7 +3,6 @@ import { Upload, Image, Loader2, Send, Check, Download, ArrowRight, ArrowLeft, S
 import { getApiUrl } from '../config';
 import { apiFetch, QuotaError, openQuotaWall } from '../lib/api';
 import StepIndicator from './ui/StepIndicator';
-import { useAuth } from '../contexts/AuthContext';
 import SegmentedControl from './ui/SegmentedControl';
 
 const STEPS = ['Input', 'Titles', 'Generate', 'Description', 'Publish'];
@@ -80,13 +79,7 @@ function DragDropZone({ label, accept, onFile, file, onClear, icon }) {
   );
 }
 
-export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUserId, managed = false, onCreateClips = null }) {
-  // Managed (hosted plan): Gemini runs server-side via the bearer token, no BYOK key.
-  // Only send X-Gemini-Key for self-host BYOK. apiFetch attaches the bearer token.
-  const keyHeader = geminiApiKey ? { 'X-Gemini-Key': geminiApiKey } : {};
-  const { localLlm } = useAuth();
-  // Claude self-host (LLM_PROVIDER=claude) needs no key: the server's CLI answers.
-  const needsKey = !geminiApiKey && !managed && localLlm?.provider !== 'claude';
+export default function ThumbnailStudio({ uploadPostKey, uploadUserId, managed = false, onCreateClips = null }) {
   // Step management
   const [step, setStep] = useState(0);
   const [mode, setMode] = useState(null); // 'video' or 'manual'
@@ -164,7 +157,6 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
 
   // --- Step 1: Analyze Video ---
   const handleAnalyze = async () => {
-    if (needsKey) return alert('Please set your Gemini API key in Settings first.');
     setIsAnalyzing(true);
 
     try {
@@ -181,7 +173,6 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
 
       const res = await apiFetch('/api/thumbnail/analyze', {
         method: 'POST',
-        headers: keyHeader,
         body: formData
       });
 
@@ -225,7 +216,6 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...keyHeader
         },
         body: JSON.stringify({ title: manualTitle, session_id: newSessionId })
       }).catch(() => { });
@@ -248,7 +238,6 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...keyHeader
         },
         body: JSON.stringify({ session_id: sessionId, message: userMsg })
       });
@@ -276,7 +265,6 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
 
   // --- Step 3: Generate Thumbnails ---
   const handleGenerate = async () => {
-    if (needsKey) return alert('Please set your Gemini API key in Settings first.');
     const finalTitle = selectedTitle || manualTitle;
     if (!finalTitle) return alert('Please select or enter a title first.');
 
@@ -296,7 +284,6 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
 
       const res = await apiFetch('/api/thumbnail/generate', {
         method: 'POST',
-        headers: keyHeader,
         body: formData
       });
 
@@ -307,7 +294,7 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
 
       const data = await res.json();
       if (!data.thumbnails || data.thumbnails.length === 0) {
-        throw new Error('No thumbnails were generated. Your Gemini API key may not have access to image generation.');
+        throw new Error('No thumbnails were generated. Pick a frame or upload a photo to build them on.');
       }
       setGeneratedThumbnails(data.thumbnails);
     } catch (e) {
@@ -356,7 +343,6 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
 
   // --- Description Generation ---
   const handleGenerateDescription = async () => {
-    if (needsKey) return alert('Please set your Gemini API key in Settings first.');
     const finalTitle = selectedTitle || manualTitle;
     if (!finalTitle) return alert('Please select a title first.');
     if (!sessionId) return alert('No session available.');
@@ -367,7 +353,6 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...keyHeader
         },
         body: JSON.stringify({ session_id: sessionId, title: finalTitle })
       });
@@ -503,20 +488,9 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
           <StepIndicator steps={STEPS} current={step} />
         </div>
 
-        {/* Gemini API Key Warning (self-host BYOK only; managed uses server key) */}
-        {needsKey && (
-          <div className="mb-6 p-5 bg-warn/10 rounded-card flex items-start gap-3">
-            <AlertCircle size={18} className="text-warn shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-medium text-warn lowercase">Gemini API Key Required</p>
-              <p className="text-xs text-muted mt-1">YouTube Studio requires a Google Gemini API key to function. Please configure it in the <strong>Settings</strong> tab before using this feature. Gemini's free tier includes 1,500 requests per day.</p>
-            </div>
-          </div>
-        )}
-
         {/* ===== STEP 0: Input Mode Selection ===== */}
         {step === 0 && (
-          <div className={`grid md:grid-cols-2 gap-6 ${needsKey ? 'opacity-50 pointer-events-none select-none' : ''}`}>
+          <div className="grid md:grid-cols-2 gap-6">
             {/* Mode A: Video Analysis */}
             <div className="card card-hover p-6 space-y-4">
               <div className="flex items-center gap-3 mb-2">
@@ -913,7 +887,6 @@ export default function ThumbnailStudio({ geminiApiKey, uploadPostKey, uploadUse
                               )}
                             </span>
                             {thumb.why && <p className="text-xs text-muted mt-1 truncate">{thumb.why}</p>}
-                            {thumb.fallback && <p className="text-xs text-warn mt-1">Gemini refused to draw this person (public figures are blocked), so it was rendered without them.</p>}
                           </div>
                           <button
                             onClick={(e) => { e.stopPropagation(); handleDownload(url); }}
