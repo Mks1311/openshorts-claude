@@ -205,6 +205,8 @@ function App() {
   const [profilesState, setProfilesState] = useState('idle'); // idle | loading | ok | none | error
 
   const [jobId, setJobId] = useState(null);
+  // A job is queued or running: a new submission joins the queue.
+  const [queueBusy, setQueueBusy] = useState(false);
   const [status, setStatus] = useState('idle'); // idle, processing, complete, error
   const [stopping, setStopping] = useState(false);
   useEffect(() => { if (status !== 'processing') setStopping(false); }, [status]);
@@ -482,6 +484,7 @@ function App() {
   }, [status, jobId]);
 
   const handleProcess = async (data, forceLowQuality = false) => {
+    const queueing = queueBusy;
     setStatus('processing');
     setJobError('');
     setLogs(["Starting process..."]);
@@ -550,6 +553,11 @@ function App() {
         return;
       }
 
+      // Behind another job: back to the form, where the list shows it in line.
+      if (queueing) {
+        handleReset();
+        return;
+      }
       setJobId(resData.job_id);
       setPartialJob(resData.partial || null);
       if (data.type === 'thumbnail_session') {
@@ -826,8 +834,10 @@ function App() {
                         3 to 15 vertical clips, captioned and ready to edit.
                       </p>
                     </div>
-                    <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'} />
-                    <JobList onOpen={openJob} />
+                    <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'}
+                      submitLabel={queueBusy ? 'add to queue' : 'generate clips'} />
+                    <JobList onOpen={openJob}
+                      onJobs={(list) => setQueueBusy(list.some((j) => j.status === 'queued' || j.status === 'processing'))} />
                   </div>
 
                   <aside className="lg:pt-[8.5rem]" aria-label="what happens">

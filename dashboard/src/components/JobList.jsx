@@ -17,26 +17,33 @@ const when = (epoch) => {
 
 // Every job the server holds, so queued, running and finished ones stay
 // reachable after "new video". Renders nothing where /api/jobs is not served
-// (the cloud) or while the server holds no job.
-export default function JobList({ onOpen }) {
-  const [jobs, setJobs] = useState([]);
+// (the cloud). `onJobs` gets each fresh list.
+export default function JobList({ onOpen, onJobs }) {
+  const [jobs, setJobs] = useState(null);
 
   useEffect(() => {
     let alive = true;
     const load = () => apiJson('/api/jobs')
-      .then((d) => { if (alive) setJobs(d.jobs || []); })
+      .then((d) => { if (alive) { setJobs(d.jobs || []); onJobs?.(d.jobs || []); } })
       .catch(() => { /* not offered here, or the server is restarting */ });
     load();
     const t = setInterval(load, 5000);
     return () => { alive = false; clearInterval(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (!jobs.length) return null;
+  if (!jobs) return null;
 
   return (
     <section className="mt-10" aria-label="your jobs">
       <p className="eyebrow mb-3">your jobs</p>
-      <ul className="card divide-y divide-rule overflow-hidden">
+      {!jobs.length && (
+        <p className="card px-4 py-4 text-sm text-muted leading-relaxed">
+          No jobs yet. Jobs wait here in a queue and run one after another, so you can
+          line up several videos and come back to the clips later.
+        </p>
+      )}
+      {jobs.length > 0 && <ul className="card divide-y divide-rule overflow-hidden">
         {jobs.map((job) => {
           const [badge, label] = BADGE[job.status] || ['badge-warn', job.status];
           return (
@@ -58,7 +65,7 @@ export default function JobList({ onOpen }) {
             </li>
           );
         })}
-      </ul>
+      </ul>}
     </section>
   );
 }

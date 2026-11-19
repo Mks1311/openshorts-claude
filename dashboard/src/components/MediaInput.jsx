@@ -41,7 +41,7 @@ const FORMATS = [
     { value: 'horizontal', label: '16:9', hint: 'Landscape', w: 30, h: 17 },
 ];
 
-export default function MediaInput({ onProcess, isProcessing }) {
+export default function MediaInput({ onProcess, isProcessing, submitLabel = 'generate clips' }) {
     const { youtubeUrlEnabled = true } = useServerConfig();
     const [mode, setMode] = useState('file'); // 'file' | 'url'
     const [url, setUrl] = useState('');
@@ -375,7 +375,7 @@ export default function MediaInput({ onProcess, isProcessing }) {
                 >
                     {isProcessing
                         ? <><Loader2 size={16} className="animate-spin" /> starting…</>
-                        : <>generate clips <ArrowRight size={16} /></>}
+                        : <>{submitLabel} <ArrowRight size={16} /></>}
                 </button>
             </div>
         </form>
