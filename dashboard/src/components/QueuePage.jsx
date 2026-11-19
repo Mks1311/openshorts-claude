@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { apiJson } from '../lib/api';
 import {
-  isActive, jobTitle, jobLink, jobProgress, settingChips, youtubeId, when, span,
+  isActive, jobTitle, jobLink, jobProgress, settingChips, youtubeId, when, span, tokens, totalTokens,
 } from '../lib/jobs';
 
 // Re-render every few seconds so "running 12 min" and ETAs keep moving
@@ -86,7 +86,10 @@ function Running({ job, now, onOpen, onStop }) {
                 {stage || 'starting'}
                 {total > 0 && <span className="text-muted">· {ready} of {total} clips ready</span>}
               </span>
-              {job.started_at && <span className="readout">running {span(now - job.started_at)}</span>}
+              <span className="readout">
+                {job.usage?.calls ? `${tokens(totalTokens(job.usage))} tokens · ` : ''}
+                {job.started_at ? `running ${span(now - job.started_at)}` : ''}
+              </span>
             </div>
             <div className="mt-2 h-1.5 rounded-full bg-paper3 overflow-hidden">
               {pct == null
@@ -156,6 +159,7 @@ function Finished({ job, onOpen }) {
           <span className="block readout mt-2">
             {job.finished_at ? `${ok ? 'finished' : 'ended'} ${when(job.finished_at)}` : `added ${when(job.submitted_at)}`}
             {took && ` · took ${took}`}
+            {job.usage?.calls ? ` · ${tokens(totalTokens(job.usage))} tokens in ${job.usage.calls} claude calls` : ''}
           </span>
         </span>
         <ArrowRight size={15} className="text-muted shrink-0 self-center" />

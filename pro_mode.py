@@ -535,7 +535,7 @@ def _ask_model(prompt):
         titles: List[Title]
 
     import llm_backend
-    return llm_backend.generate_json(prompt, Titles)[0]
+    return llm_backend.generate_json(prompt, Titles, task="pro_mode")[0]
 
 
 def _plain(text):

@@ -209,7 +209,8 @@ def pick(video_path, video_duration):
             return "none"
 
         answer = llm_backend.ask_frames(
-            list(frames) + [llm_prompts.LAYOUT_CHOICE_PROMPT], llm_prompts.LayoutChoice)
+            list(frames) + [llm_prompts.LAYOUT_CHOICE_PROMPT], llm_prompts.LayoutChoice,
+            task="layout")
     except Exception as e:
         print(f"   ⚠️ Layout choice failed ({e}) — keeping the default layout.")
         return "none"

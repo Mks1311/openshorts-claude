@@ -44,7 +44,7 @@ def test_stage_retries_a_transient_error(claude, monkeypatch):
     monkeypatch.setattr(main.time, "sleep", lambda *_: None)
     calls = {"n": 0}
 
-    def fake_generate(prompt, schema, model=None):
+    def fake_generate(prompt, schema, model=None, task=None):
         calls["n"] += 1
         if calls["n"] == 1:
             raise RuntimeError("claude CLI error (status 529, api_error): Overloaded")
@@ -113,7 +113,8 @@ def _ok(answer, structured=True):
 
 def test_frames_go_as_jpeg_blocks_in_order_on_the_vision_model(claude, monkeypatch):
     seen = _cli(monkeypatch, _ok({"layout": "split", "confidence": 0.9, "why": "two faces"}))
-    answer = llm_backend.ask_frames(["Shot 0:", b"\xff\xd8jpg", "pick"], llm_prompts.LayoutChoice)
+    answer = llm_backend.ask_frames(["Shot 0:", b"\xff\xd8jpg", "pick"], llm_prompts.LayoutChoice,
+                                    task="layout")
 
     blocks = json.loads(seen["input"])["message"]["content"]
     assert [b["type"] for b in blocks] == ["text", "image", "text"]
@@ -137,7 +138,7 @@ def test_layout_picker_asks_claude_with_its_frames(claude, monkeypatch):
     monkeypatch.setattr(layout_picker, "sample_frames", lambda *a, **k: [b"f1", b"f2"])
     asked = {}
 
-    def fake(contents, schema):
+    def fake(contents, schema, **_):
         asked.update(contents=contents, schema=schema)
         return {"layout": "split", "confidence": 0.8, "why": "two people"}
 
@@ -154,3 +155,30 @@ def test_thumbnail_text_goes_to_claude_without_a_schema(claude, monkeypatch):
     out = thumbnail.refine_titles("ctx", "shorter please")
     assert out == {"titles": ["A"], "thumbnail_texts": ["B"], "language": "en"}
     assert "--json-schema" not in seen["cmd"]
+
+
+# --- per-task models and usage ----------------------------------------------
+
+def test_a_task_runs_on_the_model_picked_in_settings(monkeypatch):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+    assert claude_cli.model_for("layout") == "haiku"
+    assert claude_cli.model_for("clips") == "sonnet"
+    with open(claude_cli.SETTINGS_FILE, "w") as f:
+        json.dump({"layout": "opus", "clips": "bad name; rm", "nope": "haiku"}, f)
+    assert claude_cli.model_for("layout") == "opus"
+    assert claude_cli.model_for("clips") == "sonnet"  # an invalid pick is ignored
+    monkeypatch.setenv("LLM_MODEL", "haiku")
+    assert claude_cli.model_for("clips") == "haiku"  # LLM_MODEL still steers text tasks
+
+
+def test_every_call_is_recorded_for_the_server_and_the_job(claude, monkeypatch, tmp_path):
+    job_log = tmp_path / "job" / ".usage.jsonl"
+    monkeypatch.setenv("USAGE_LOG", str(job_log))
+    out = _ok({"windows": []})
+    out = out.replace('"is_error": false', '"is_error": false, "usage": {"input_tokens": 1200, "output_tokens": 80}')
+    _cli(monkeypatch, out)
+    llm_backend.generate_json("score these", llm_prompts.ScoreResponse)
+    for path in (claude_cli.USAGE_FILE, str(job_log)):
+        summary = claude_cli.summarize(claude_cli.read_usage(path))
+        assert summary["calls"] == 1 and summary["input_tokens"] == 1200
+        assert summary["tasks"]["clips"]["output_tokens"] == 80

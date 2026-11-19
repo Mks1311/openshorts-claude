@@ -116,7 +116,7 @@ def detect(video_path, frames=None):
         frames = frames if frames is not None else layout_picker.sample_frames(video_path)
         if not frames:
             return None
-        answer = llm_backend.ask_frames(list(frames) + [PROMPT], SubtitleAnswer)
+        answer = llm_backend.ask_frames(list(frames) + [PROMPT], SubtitleAnswer, task="subtitles")
     except Exception as e:
         print(f"   ⚠️ Burned-in subtitle check failed ({e}) — captions as usual.")
         return None

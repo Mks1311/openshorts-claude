@@ -122,7 +122,7 @@ def _ask_model(frames, prompt):
     """One vision call; returns the parsed dict. Split out so tests can stub it."""
     import llm_prompts
     import llm_backend
-    return llm_backend.ask_frames(list(frames) + [prompt], llm_prompts.GroundedHook)
+    return llm_backend.ask_frames(list(frames) + [prompt], llm_prompts.GroundedHook, task="hooks")
 
 
 def reground(clip_path, clip, transcript, start, end) -> Optional[dict]:

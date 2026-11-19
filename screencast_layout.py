@@ -383,7 +383,7 @@ def detect_content_ranges(video_path, scenes, fps):
             parts.append(f"Shot {n}:")
             parts.append(jpg)
         raw = llm_backend.ask_frames(parts + [llm_prompts.SHOT_CONTENT_PROMPT],
-                                     llm_prompts.ShotContentResponse).get("shots") or []
+                                     llm_prompts.ShotContentResponse, task="layout").get("shots") or []
     except Exception as e:
         print(f"   ⚠️ Screen check failed ({e}).")
         return None

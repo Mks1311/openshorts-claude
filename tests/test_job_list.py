@@ -80,3 +80,41 @@ def test_label_and_settings_travel_in_the_resume_manifest(tmp_path, monkeypatch)
                                       label="https://youtu.be/x", settings={"clips": 5})
     m = app_module._read_manifest("j")
     assert m["label"] == "https://youtu.be/x" and m["settings"] == {"clips": 5}
+
+
+def _call(method, path, **kw):
+    async def _do():
+        transport = httpx.ASGITransport(app=app_module.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.request(method, path, **kw)
+    return asyncio.run(_do())
+
+
+def test_models_can_be_picked_per_task(jobs):
+    resp = _call("PUT", "/api/settings/models", json={"models": {"layout": "opus"}})
+    assert resp.status_code == 200
+    layout = next(t for t in resp.json()["tasks"] if t["id"] == "layout")
+    assert layout["model"] == "opus" and layout["picked"] == "opus" and layout["default"] == "haiku"
+    reset = _call("PUT", "/api/settings/models", json={"models": {"layout": None}})
+    assert next(t for t in reset.json()["tasks"] if t["id"] == "layout")["model"] == "haiku"
+    assert _call("PUT", "/api/settings/models", json={"models": {"layout": "x; rm -rf"}}).status_code == 400
+    assert _call("PUT", "/api/settings/models", json={"models": {"nope": "haiku"}}).status_code == 400
+
+
+def test_a_job_shows_its_token_usage(jobs, tmp_path):
+    (tmp_path / ".usage.jsonl").write_text(
+        '{"at": 1, "task": "clips", "model": "sonnet", "input_tokens": 1000, "output_tokens": 50, "seconds": 2}\n'
+        '{"at": 2, "task": "layout", "model": "haiku", "input_tokens": "9", "output_tokens": 1, "seconds": 1}\n'
+        'not json\n')
+    jobs["j"] = {"status": "completed", "logs": _log("done"), "output_dir": str(tmp_path)}
+    usage = _get().json()["jobs"][0]["usage"]
+    assert usage["calls"] == 2 and usage["input_tokens"] == 1009
+    assert usage["tasks"]["clips"]["models"] == {"sonnet": 1}
+
+
+def test_usage_endpoint_sums_the_server_log(jobs):
+    import claude_cli, time as _t
+    claude_cli.record_usage({"at": _t.time(), "task": "studio", "model": "sonnet",
+                             "input_tokens": 10, "output_tokens": 5, "seconds": 1, "ok": True})
+    body = _call("GET", "/api/usage?days=1").json()
+    assert body["calls"] == 1 and body["tasks"]["studio"]["input_tokens"] == 10 and len(body["days"]) == 1

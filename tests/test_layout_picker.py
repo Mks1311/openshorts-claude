@@ -90,7 +90,7 @@ class TestPick:
         monkeypatch.setattr(layout_picker, "ENABLED", True)
         monkeypatch.setattr(layout_picker, "sample_frames", lambda *a, **k: [b"jpg"])
 
-        def broken(contents, schema):
+        def broken(contents, schema, **_):
             raise RuntimeError("claude CLI error (status 529)")
         monkeypatch.setattr(llm_backend, "ask_frames", broken)
         assert pick("video.mp4", 60) == "none"

@@ -104,3 +104,13 @@ export function settingChips(job) {
   if (s.captions === false) chips.push('no captions');
   return chips;
 }
+
+// 1234 -> "1.2k", 2500000 -> "2.5M".
+export const tokens = (n) => {
+  const v = Number(n) || 0;
+  if (v >= 1e6) return `${(v / 1e6).toFixed(v >= 1e7 ? 0 : 1)}M`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(v >= 1e4 ? 0 : 1)}k`;
+  return String(v);
+};
+
+export const totalTokens = (u) => (u ? (u.input_tokens || 0) + (u.output_tokens || 0) : 0);

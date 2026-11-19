@@ -4925,6 +4925,8 @@ async def run_job(job_id, job_data):
     """Executes the subprocess for a specific job."""
     cmd = job_data['cmd']
     env = _job_encode_env(job_data['env'])
+    # Each Claude call of the job is recorded in its own dir (claude_cli).
+    env["USAGE_LOG"] = os.path.join(job_data['output_dir'], _USAGE_FILE)
     if await _paid_proxy_budget_exceeded():
         # The daily paid-proxy budget ran out while this job was queued.
         env.pop("PROXY_URL", None)
@@ -5866,6 +5868,7 @@ async def get_status(job_id: str, request: Request):
         # Set when only the first part of the source was clipped (quota wall
         # offer), so the dashboard can say so next to the clips.
         "partial": job.get('partial'),
+        "usage": None if BILLING_ENABLED else _job_usage(job),
     }
 
 
@@ -5884,6 +5887,18 @@ def _job_title(job):
         except (OSError, KeyError, ValueError):
             pass
     return job['title']
+
+
+_USAGE_FILE = ".usage.jsonl"
+
+
+def _job_usage(job):
+    """Tokens and calls of one job, per task (claude_cli.summarize), or None."""
+    path = os.path.join(job.get('output_dir') or "", _USAGE_FILE)
+    if not job.get('output_dir') or not os.path.exists(path):
+        return None
+    import claude_cli
+    return claude_cli.summarize(claude_cli.read_usage(path))
 
 
 def _job_summary(job_id, job):
@@ -5913,6 +5928,7 @@ def _job_summary(job_id, job):
         "eta_seconds": queue["eta_seconds"] if queue else None,
         "stopping": bool(job.get('stop_requested')) and status in ('queued', 'processing'),
         "error": None,
+        "usage": _job_usage(job),
         # The running job's log: the dashboard reads its stage and clip count.
         "logs": lines[-400:] if status == 'processing' else None,
     }
@@ -5924,6 +5940,70 @@ def _job_summary(job_id, job):
         except Exception:
             row["error"] = None
     return row
+
+
+class ModelPicks(BaseModel):
+    # task -> model name, or None to go back to the default.
+    models: Dict[str, Optional[str]]
+
+
+@app.get("/api/settings/models")
+async def get_model_settings():
+    """The model each kind of Claude call runs on, and what can be picked.
+
+    shortcut: self-host only, like /api/jobs: one operator owns the server."""
+    if BILLING_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+    import claude_cli
+    picked = claude_cli.model_overrides()
+    return {
+        "tasks": [{"id": t, "label": label, "help": help_, "default": claude_cli.TASKS[t][2],
+                   "picked": picked.get(t), "model": claude_cli.model_for(t)}
+                  for t, (label, help_, _default) in claude_cli.TASKS.items()],
+        "choices": claude_cli.MODEL_CHOICES,
+    }
+
+
+@app.put("/api/settings/models")
+async def put_model_settings(body: ModelPicks):
+    """Pick a model per task; None restores the default. Takes effect on the
+    next call, running jobs included."""
+    if BILLING_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+    import claude_cli
+    picks = claude_cli.model_overrides()
+    for task, model in body.models.items():
+        if task not in claude_cli.TASKS:
+            raise HTTPException(status_code=400, detail=f"Unknown task: {task[:40]}")
+        if model is None or model == "":
+            picks.pop(task, None)
+        elif claude_cli.valid_model(model):
+            picks[task] = model
+        else:
+            raise HTTPException(status_code=400, detail="Not a model name")
+    write_json_atomic(claude_cli.SETTINGS_FILE, picks)
+    return await get_model_settings()
+
+
+@app.get("/api/usage")
+async def get_usage(days: float = 7):
+    """Claude calls of the last ``days`` on this server: totals, per task and
+    per day (tokens count against the subscription's usage limit)."""
+    if BILLING_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+    import claude_cli
+    since = time.time() - max(0.0, min(days, 90.0)) * 86400
+    records = claude_cli.read_usage(claude_cli.USAGE_FILE, since)
+    by_day = {}
+    for r in records:
+        try:
+            day = time.strftime("%Y-%m-%d", time.localtime(float(r.get("at"))))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        by_day.setdefault(day, []).append(r)
+    return {"since": since, **claude_cli.summarize(records),
+            "days": [{"day": d, **{k: v for k, v in claude_cli.summarize(rs).items() if k != "tasks"}}
+                     for d, rs in sorted(by_day.items())]}
 
 
 @app.get("/api/jobs")
@@ -5960,9 +6040,32 @@ async def stop_job(job_id: str, request: Request):
         raise HTTPException(status_code=409, detail="This job is not running.")
     if not job.get('stop_requested'):
         job['stop_requested'] = True
-        # A queued job ends when it reaches a slot (run_job never starts it).
         job['logs'].append("⏹️ Stopped. No clips will be made from this run.")
+    if job.get('status') == 'queued' and _take_off_queue(job_id):
+        # Still waiting in line: it leaves the queue now instead of when it
+        # reaches a slot, which with one slot can be hours away.
+        job['status'] = 'failed'
+        _clear_resume_manifest(job_id)
+        await _notify_job_webhook(job_id)
+        return {"status": "removed"}
+    # Running, or already taken by the worker: run_job / _run_main end it.
     return {"status": "stopping"}
+
+
+def _take_off_queue(job_id) -> bool:
+    """Drop a waiting job's entry from the queue; False if it is not there."""
+    heap = job_queue._queue
+    kept = [e for e in heap if e[2] != job_id]
+    if len(kept) == len(heap):
+        return False
+    heap[:] = kept
+    heapq.heapify(heap)
+    try:
+        job_queue.task_done()  # its entry was put once and will not be got
+    except ValueError:
+        pass
+    _queue_changed()
+    return True
 
 
 def _locate_source(job_id: str):
@@ -6217,7 +6320,7 @@ async def download_all_clips(job_id: str, request: Request):
     return FileResponse(
         zip_path,
         media_type="application/zip",
-        filename=f"openshorts_clips_{job_id[:8]}.zip",
+        filename=f"shorts_maxxing_clips_{job_id[:8]}.zip",
         background=BackgroundTask(remove_zip),
     )
 

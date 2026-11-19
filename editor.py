@@ -33,8 +33,7 @@ class VideoEditor:
         """Timestamped frames + prompt to Claude: the parsed dict with a schema, else the text."""
         import claude_cli
         import frame_sampler
-        return claude_cli.ask(frame_sampler.timed(frames) + [prompt], schema,
-                              model=claude_cli.VISION_MODEL)[0]
+        return claude_cli.ask(frame_sampler.timed(frames) + [prompt], schema, task="edits")[0]
 
     def sample_frames(self, video_path):
         """The clip as timestamped frames, what the edit plans are asked over:

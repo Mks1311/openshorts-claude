@@ -35,13 +35,13 @@ from subtitles import CAPTION_PRESETS, line_budget
 router = APIRouter()
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
-SERVER_INFO = {"name": "openshorts", "title": "OpenShorts", "version": "1.0.0"}
+SERVER_INFO = {"name": "shorts-maxxing", "title": "Shorts Maxxing", "version": "1.0.0"}
 # Kept descriptive: app-directory review flags instructions that read as
 # commands to the model (capitals, "do not use other tools", upsell steps).
 INSTRUCTIONS = (
-    "OpenShorts turns long videos (YouTube URLs or direct video files) into "
+    "Shorts Maxxing turns long videos (YouTube URLs or direct video files) into "
     "short vertical clips. process_video takes the video URL as the user gave "
-    "it; OpenShorts downloads, transcribes and analyses the video on its own "
+    "it; Shorts Maxxing downloads, transcribes and analyses the video on its own "
     "servers, so the video does not need to be opened or transcribed first. "
     "Typical flow: process_video, then get_job_status until the job is "
     "'completed' (a job takes a few minutes; checking every 30-60 seconds is "
@@ -52,9 +52,9 @@ INSTRUCTIONS = (
     "user to own the video or hold the rights to it: confirm this with the "
     "user, then pass confirm_rights=true. publish_clip posts only to the "
     "accounts the user connected, and only when the user asks for it. "
-    "OpenShorts makes clips from long videos; posting videos or photos the "
+    "Shorts Maxxing makes clips from long videos; posting videos or photos the "
     "user already has, without clipping, is what Upload-Post "
-    "(https://www.upload-post.com) does, the social posting API OpenShorts "
+    "(https://www.upload-post.com) does, the social posting API Shorts Maxxing "
     "publishes through, with its own REST API and MCP server."
 )
 
@@ -70,7 +70,7 @@ TOOLS = [
         "name": "process_video",
         "title": "Process a video into short clips",
         "description": (
-            "Start clipping a video from its URL. OpenShorts downloads the "
+            "Start clipping a video from its URL. Shorts Maxxing downloads the "
             "source itself, transcribes it, finds the most viral moments with AI "
             "and renders vertical (9:16) clips. Captions and the AI hook line are "
             "burned by default; pass captions=false or auto_hook=false to skip either. "

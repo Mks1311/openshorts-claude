@@ -28,6 +28,7 @@ import llm_prompts
 import hook_grounding
 import layout_picker
 import llm_backend
+import claude_cli
 import yt_account
 import twitch_signals
 from clip_selection import (build_transcript_windows, clip_count_targets,
@@ -2149,7 +2150,7 @@ def get_viral_clips(transcript_result, video_duration, viewer_clips=None):
     that hold them, and the hottest windows are guaranteed a shortlist slot.
     """
     language = str(transcript_result.get('language') or 'unknown')
-    model_name = llm_backend.model_name()
+    model_name = claude_cli.model_for("clips")
     print("\U0001f916  Analyzing with the claude CLI (2-pass: score → detail)...")
     print(f"\U0001f916  Model: {model_name} | language: {language}")
 
@@ -2401,7 +2402,7 @@ def _visual_pass_frames(model_name, video_path, s0, s1, language,
                   min_clips=min_clips, max_clips=max_clips,
                   min_secs=min_secs, max_secs=max_secs) + (hint or ""))
     parsed, cost = claude_cli.ask(frame_sampler.timed(frames) + [prompt],
-                                  llm_prompts.VisualResponse, model=model_name)
+                                  llm_prompts.VisualResponse, model=model_name, task="visual_clips")
     return _clamp_shorts(parsed.get("shorts"), duration), cost
 
 
@@ -2414,7 +2415,7 @@ def get_visual_clips(video_path, video_duration, language="en", viewer_clips=Non
     picks are merged, de-overlapped and cut to the best ``CLIP_TARGET_MAX``
     by score."""
     print("🎥  Silent video — analyzing by vision (no transcript)...")
-    model_name = llm_backend.model_name()
+    model_name = claude_cli.model_for("visual_clips")
 
     # The vision path has no scoring windows to derive a count from, so the
     # env targets (user request) apply directly over the classic 3-15.

@@ -7,6 +7,9 @@ import {
 import MediaInput from './components/MediaInput';
 import JobList from './components/JobList';
 import QueuePage from './components/QueuePage';
+import LogPanel from './components/LogPanel';
+import UsageCard from './components/UsageCard';
+import { ModelPicker, UsageSummary } from './components/ModelSettings';
 import { useJobs, isActive } from './lib/jobs';
 import McpConnectCard from './components/McpConnectCard';
 import ResultCard from './components/ResultCard';
@@ -250,6 +253,7 @@ function App() {
   const [qualityGate, setQualityGate] = useState(null);
   const [logs, setLogs] = useState([]);
   const [logTimes, setLogTimes] = useState([]);
+  const [jobUsage, setJobUsage] = useState(null);
   const progress = useMemo(() => clipProgress(logs), [logs]);
   const stage = useMemo(() => jobStage(logs), [logs]);
   const clipsMaking = status === 'processing' && progress.total > 0;
@@ -357,7 +361,7 @@ function App() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `openshorts_clips_${(jobId || '').slice(0, 8)}.zip`;
+      a.download = `shorts_maxxing_clips_${(jobId || '').slice(0, 8)}.zip`;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -457,6 +461,7 @@ function App() {
           failures = 0;
           if (data.result) setResults(data.result);
           if (data.partial) setPartialJob(data.partial);
+          setJobUsage(data.usage || null);
           setQueueInfo(data.status === 'queued' && data.queue ? data.queue : null);
 
           if (data.status === 'completed') {
@@ -590,6 +595,7 @@ function App() {
     setLogTimes([]);
     setProcessingMedia(null);
     setPartialJob(null);
+    setJobUsage(null);
     setQueueInfo(null);
     setJobError('');
     localStorage.removeItem(SESSION_KEY);
@@ -641,13 +647,13 @@ function App() {
 
   const Sidebar = () => (
     <aside className="hidden md:flex w-[76px] lg:w-60 bg-paper2 border-r border-rule flex-col h-full shrink-0">
-      <button onClick={() => setActiveTab('dashboard')} className="h-16 px-5 flex items-center gap-3 text-left" title="openshorts">
-        <span className="w-8 h-8 rounded-input overflow-hidden border border-rule shrink-0">
-          <img src="/logo-openshorts.png" alt="" className="w-full h-full object-cover" />
-        </span>
+      <button onClick={() => setActiveTab('dashboard')} className="h-16 px-5 flex items-center gap-3 text-left" title="shorts maxxing">
+        <img src="/logo.svg" alt="" className="w-8 h-8 shrink-0 rounded-[9px] shadow-[0_0_18px_var(--color-glow)]" />
         <span className="hidden lg:block min-w-0">
-          <span className="block font-display lowercase text-lg leading-none text-ink">openshorts</span>
-          <span className="block readout mt-1">personal studio</span>
+          <span className="block font-display lowercase text-xl leading-none text-ink">
+            shorts <span className="text-brass italic">maxxing</span>
+          </span>
+          <span className="block readout mt-1">clip studio</span>
         </span>
       </button>
 
@@ -731,9 +737,7 @@ function App() {
       <main className="flex-1 min-w-0 flex flex-col h-full overflow-hidden relative">
         <header className="h-16 border-b border-rule bg-paper flex items-center justify-between gap-2 px-4 sm:px-6 shrink-0 z-10">
           <div className="flex items-center gap-3 min-w-0">
-            <span className="md:hidden w-7 h-7 rounded-input overflow-hidden border border-rule shrink-0">
-              <img src="/logo-openshorts.png" alt="" className="w-full h-full object-cover" />
-            </span>
+            <img src="/logo.svg" alt="shorts maxxing" className="md:hidden w-7 h-7 rounded-[8px] shrink-0" />
             <h1 className="font-display lowercase text-xl text-ink truncate">{activeNav?.label}</h1>
             {activeTab === 'dashboard' && status !== 'idle' && (
               <button onClick={handleReset} className="btn-ghost px-3.5 py-1.5 text-xs shrink-0" aria-label="new video">
@@ -786,7 +790,7 @@ function App() {
                       Moment picking, layouts, hooks, edits, titles and thumbnails all run on
                       {' '}<span className="text-ink2 font-mono">{model}</span> through the <code className="font-mono text-ink2">claude</code> CLI
                       signed in on this machine, on your Claude subscription. No API key.
-                      Change the model with <code className="font-mono text-ink2">LLM_MODEL</code> in the backend&apos;s <code className="font-mono text-ink2">.env</code>.
+                      Pick the model for each step below.
                     </p>
                     {jobRetentionSeconds > 0 && (
                       <p className="text-xs text-muted mt-3 flex items-center gap-1.5">
@@ -794,6 +798,22 @@ function App() {
                       </p>
                     )}
                   </SettingsSection>
+
+                  {allJobs && (
+                    <SettingsSection eyebrow="Models" title="which claude does what">
+                      <ModelPicker />
+                    </SettingsSection>
+                  )}
+
+                  {allJobs && (
+                    <SettingsSection eyebrow="Usage" title="tokens spent">
+                      <p className="text-sm text-muted leading-relaxed mb-4">
+                        Every Claude call counts against your plan&apos;s usage limit. Each job shows its own
+                        breakdown too.
+                      </p>
+                      <UsageSummary />
+                    </SettingsSection>
+                  )}
 
                   <SettingsSection
                     eyebrow="Publishing"
@@ -975,33 +995,13 @@ function App() {
                   </div>
                 )}
 
-                <div className={`bg-paper rounded-input border border-rule overflow-hidden flex flex-col transition-all duration-500 ${status === 'complete' ? `min-h-0 opacity-60 hover:opacity-100 ${logsVisible ? 'h-32' : 'h-auto'}` : `flex-1 ${logsVisible ? 'min-h-[160px] sm:min-h-[200px]' : 'min-h-0 flex-none'}`}`}>
-                  <button
-                    type="button"
-                    onClick={() => setLogsVisible(!logsVisible)}
-                    aria-expanded={logsVisible}
-                    className="w-full px-4 py-2.5 border-b border-rule flex items-center justify-between gap-2 bg-paper2 shrink-0 text-left"
-                  >
-                    <span className="readout flex items-center gap-2"><Terminal size={12} /> log</span>
-                    <span className="flex items-center gap-2 text-muted">
-                      {!logsVisible && logs.length > 0 && <span className="readout">{logs.length}</span>}
-                      <ChevronDown size={16} className={logsVisible ? '' : 'rotate-180'} />
-                    </span>
-                  </button>
-                  {logsVisible && (
-                    <div className="flex-1 p-3.5 sm:p-4 overflow-y-auto font-mono text-[11px] sm:text-xs space-y-1.5 custom-scrollbar text-muted break-words">
-                      {logs.map((log, i) => (
-                        <div key={i} className={`flex gap-2 ${log.toLowerCase().includes('error') ? 'text-danger' : 'text-muted'}`}>
-                          <span className="opacity-50 shrink-0 hidden sm:inline tabular-nums">
-                            {logTimes[i] ? new Date(logTimes[i] * 1000).toLocaleTimeString() : ''}
-                          </span>
-                          <span className="min-w-0 break-words">{log}</span>
-                        </div>
-                      ))}
-                      {status === 'processing' && <div className="animate-pulse text-brass">_</div>}
-                    </div>
-                  )}
-                </div>
+                {jobUsage?.calls > 0 && (
+                  <div className="mb-3"><UsageCard usage={jobUsage} title="claude usage for this job" compact={status !== 'complete'} /></div>
+                )}
+
+                <LogPanel logs={logs} times={logTimes} running={status === 'processing'}
+                  open={logsVisible} onToggle={() => setLogsVisible(!logsVisible)}
+                  className={status === 'complete' ? (logsVisible ? 'h-72' : '') : (logsVisible ? 'flex-1 min-h-[220px]' : '')} />
               </div>
 
               {/* Clips */}

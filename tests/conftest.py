@@ -38,3 +38,13 @@ def _fresh_owner_cache():
     owner_cache.clear()
     yield
     owner_cache.clear()
+
+
+@pytest.fixture(autouse=True)
+def _private_model_state(tmp_path, monkeypatch):
+    """Model picks and usage records go to the test's own files, never to the
+    real output/ of the machine running the suite."""
+    import claude_cli
+    monkeypatch.setattr(claude_cli, "SETTINGS_FILE", str(tmp_path / ".models.json"))
+    monkeypatch.setattr(claude_cli, "USAGE_FILE", str(tmp_path / ".usage.jsonl"))
+    monkeypatch.delenv("USAGE_LOG", raising=False)

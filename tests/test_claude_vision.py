@@ -44,7 +44,7 @@ def test_silent_video_stretches_are_asked_by_frames_and_shifted(claude, monkeypa
     monkeypatch.setattr(frame_sampler, "jpegs_every",
                         lambda path, s0, s1, step, width=512: asked.append((s0, s1)) or [(0, b"j")])
 
-    def fake_ask(contents, schema, model=None, timeout=600.0):
+    def fake_ask(contents, schema, model=None, timeout=600.0, task=None):
         assert contents[:2] == ["t=0s", b"j"]
         return {"shorts": [{"start": 10, "end": 40, "predicted_score": 80,
                             "video_description_for_tiktok": "", "video_description_for_instagram": "",
@@ -65,8 +65,8 @@ def test_editor_sends_frames_not_an_upload(claude, monkeypatch):
     monkeypatch.setattr(editor_mod.os.path, "exists", lambda p: True)
     seen = {}
 
-    def fake_ask(contents, schema, model=None, timeout=600.0):
-        seen.update(contents=contents, schema=schema, model=model)
+    def fake_ask(contents, schema, model=None, timeout=600.0, task=None):
+        seen.update(contents=contents, schema=schema, model=model, task=task)
         return {"edits": [{"type": "punch_in", "start": 1.0, "end": 3.0,
                            "strength": 0.1, "reason": "punchline"}]}, {}
 
@@ -76,7 +76,7 @@ def test_editor_sends_frames_not_an_upload(claude, monkeypatch):
     out = ed.get_ffmpeg_filter(frames, 10.0, width=1080, height=1920)
 
     assert seen["contents"][:4] == ["t=0s", b"j", "t=2s", b"k"]
-    assert seen["schema"] is editor_mod.EditPlan and seen["model"] == claude_cli.VISION_MODEL
+    assert seen["schema"] is editor_mod.EditPlan and seen["task"] == "edits"
     assert out["edits"] and out["filter_string"]
 
 

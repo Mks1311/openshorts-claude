@@ -16,17 +16,17 @@ function clients(url) {
   return [
     {
       id: 'claude-code', label: 'Claude Code',
-      snippet: `claude mcp add --transport http openshorts ${url}`,
+      snippet: `claude mcp add --transport http shorts-maxxing ${url}`,
       note: 'Run once; the tools then show up in every Claude Code session.',
     },
     {
       id: 'claude-desktop', label: 'Claude Desktop',
-      snippet: `{\n  "mcpServers": {\n    "openshorts": {\n      "command": "npx",\n      "args": ["-y", "mcp-remote", "${url}"]\n    }\n  }\n}`,
+      snippet: `{\n  "mcpServers": {\n    "shorts-maxxing": {\n      "command": "npx",\n      "args": ["-y", "mcp-remote", "${url}"]\n    }\n  }\n}`,
       note: 'Settings → Developer → Edit config, paste it in, restart Claude.',
     },
     {
       id: 'cursor', label: 'Cursor',
-      snippet: `{\n  "mcpServers": {\n    "openshorts": {\n      "url": "${url}"\n    }\n  }\n}`,
+      snippet: `{\n  "mcpServers": {\n    "shorts-maxxing": {\n      "url": "${url}"\n    }\n  }\n}`,
       note: 'Settings → MCP → Add new global MCP server.',
     },
     {

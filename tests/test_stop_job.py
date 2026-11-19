@@ -103,3 +103,21 @@ def test_run_main_kills_the_process_and_its_children(jobs):
     assert took < 5
     child.wait(timeout=5)  # raises if the child outlived the stop
     assert not child.is_running()
+
+
+def test_a_queued_job_leaves_the_queue_at_once(jobs, monkeypatch):
+    queue = asyncio.PriorityQueue()
+    monkeypatch.setattr(app_module, "job_queue", queue)
+    monkeypatch.setattr(app_module, "_clear_resume_manifest", lambda jid: None)
+
+    async def _no_webhook(jid):
+        return None
+    monkeypatch.setattr(app_module, "_notify_job_webhook", _no_webhook)
+    jobs["a"] = _job("queued")
+    jobs["b"] = _job("queued")
+    queue.put_nowait((2, 1.0, "a"))
+    queue.put_nowait((2, 2.0, "b"))
+    resp = _post("a")
+    assert resp.json() == {"status": "removed"}
+    assert jobs["a"]["status"] == "failed"
+    assert [e[2] for e in queue._queue] == ["b"]

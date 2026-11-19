@@ -19,7 +19,9 @@ DEFAULT_TIMEOUT = 600.0  # a long scoring batch can take minutes
 
 
 def model_name() -> str:
-    return (os.environ.get("LLM_MODEL") or "").strip() or DEFAULT_MODEL
+    """The moment-picking model, the one the dashboard names."""
+    import claude_cli
+    return claude_cli.model_for("clips")
 
 
 def describe() -> dict:
@@ -35,18 +37,17 @@ def _timeout() -> float:
 
 
 def generate_json(prompt: str, schema: Type[BaseModel], model: Optional[str] = None,
-                  ) -> Tuple[dict, Optional[dict]]:
+                  task: str = "clips") -> Tuple[dict, Optional[dict]]:
     """One text call that must come back as JSON matching ``schema``:
     ``(parsed_dict, cost_analysis)``. Raises on failure; the retry policy
     lives in the caller."""
     import claude_cli
-    return claude_cli.ask(prompt, schema, model=model or model_name(), timeout=_timeout())
+    return claude_cli.ask(prompt, schema, model=model, timeout=_timeout(), task=task)
 
 
-def ask_frames(contents, schema: Type[BaseModel]) -> dict:
+def ask_frames(contents, schema: Type[BaseModel], task: str) -> dict:
     """One call over text strings and JPEG frames (bytes), in order, answered
     as a dict matching ``schema``. Raises on any failure; each caller has its
     own fallback."""
     import claude_cli
-    return claude_cli.ask(contents, schema, model=claude_cli.VISION_MODEL,
-                          timeout=_timeout())[0]
+    return claude_cli.ask(contents, schema, timeout=_timeout(), task=task)[0]
