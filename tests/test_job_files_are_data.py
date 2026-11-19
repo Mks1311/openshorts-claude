@@ -1,11 +1,10 @@
 """What is read back from a job directory is data, never part of a command.
 
 Recipes, metadata and subtitles written next to a clip are read again later
-(re-caption, hook replace, AI edit, the clips-ready email). They may have been
+(re-caption, hook replace, AI edit). They may have been
 written on another machine (the remote worker), so a number is read as a
 number and text as text before either goes into a filter graph or markup.
 """
-import asyncio
 import json
 import os
 
@@ -73,39 +72,6 @@ def test_a_subtitle_word_cannot_start_a_line_of_its_own():
     subtitles = pytest.importorskip("subtitles")
     out = subtitles._escape_ass_text("hi\r\nDialogue: 0,0:00:00.00,0:00:09.00,Default,,0,0,0,,x {\\b1}")
     assert "\n" not in out and "\r" not in out and "{" not in out and "\\" not in out
-
-
-def test_the_clips_ready_email_shows_a_title_as_text(monkeypatch):
-    emails = pytest.importorskip("cloud.emails")
-    sent = {}
-
-    async def fake_send(to, subject, html, *a, **k):
-        sent["html"] = html
-    name = next(n for n in ("send_email", "_send_email", "_send") if hasattr(emails, n))
-    monkeypatch.setattr(emails, name, fake_send)
-    asyncio.run(emails.send_clips_ready_email(
-        "u@example.com", '<a href="https://evil.example">Click</a><script>x</script>', 3,
-        "https://app.example/#app"))
-    assert "<script>" not in sent["html"] and 'href="https://evil.example"' not in sent["html"]
-    assert "&lt;a href=" in sent["html"]
-
-
-def test_an_admin_alert_shows_log_text_as_text(monkeypatch):
-    alerts = pytest.importorskip("cloud.alerts")
-    sent = {}
-
-    async def fake_email(to, subject, html, *a, **k):
-        sent["html"] = html
-
-    async def fake_telegram(*a, **k):
-        return None
-    monkeypatch.setattr(alerts, "send_email", fake_email)
-    monkeypatch.setattr(alerts, "send_telegram", fake_telegram)
-    from types import SimpleNamespace
-    monkeypatch.setattr(alerts, "settings", SimpleNamespace(
-        admin_email="ops@example.com", smtp_configured=True, telegram_configured=False))
-    asyncio.run(alerts.send_admin_alert("Proxy error", '407 <a href="https://evil.example">x</a>'))
-    assert "<a href" not in sent["html"] and "&lt;a href" in sent["html"]
 
 
 def test_a_layout_sidecar_that_is_not_an_object_reads_as_no_ranges(tmp_path):

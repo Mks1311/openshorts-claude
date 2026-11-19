@@ -4,10 +4,8 @@
 age-only sweep removed their dir (and source upload) under the worker. The
 user got no clips and the minute reservation stayed held for 3 hours.
 """
-import asyncio
 import os
 import time
-import types
 
 import pytest
 
@@ -178,7 +176,6 @@ class TestSubmissionsStillUploading:
     @pytest.fixture
     def in_flight(self, disk, monkeypatch):
         monkeypatch.setattr(app_module, "_dirs_in_flight", {})
-        monkeypatch.setattr(app_module, "pending_uploads", {})
         return disk
 
     def test_size_caps_keep_a_submission_still_uploading(self, in_flight, monkeypatch):
@@ -211,37 +208,4 @@ class TestSubmissionsStillUploading:
         app_module._dirs_in_flight["ghost"] -= app_module._DIR_IN_FLIGHT_MAX_AGE + 1
         assert not app_module._job_is_active("ghost")
 
-    def test_an_open_agent_upload_slot_is_kept(self, in_flight, monkeypatch):
-        _, up = in_flight
-        live = up / "pending_u-live_clip.mp4"
-        live.write_bytes(b"x")
-        old = up / "pending_u-old_clip.mp4"
-        old.write_bytes(b"x")
-        now = time.time()
-        app_module.pending_uploads["u-live"] = {"path": str(live), "created": now}
-        app_module.pending_uploads["u-old"] = {
-            "path": str(old), "created": now - app_module.UPLOAD_TTL_SECONDS - 1}
-        monkeypatch.setattr(app_module, "UPLOADS_MAX_GB", 1 / 1024 ** 3)
-        app_module._enforce_uploads_size_cap()
-        assert live.exists() and not old.exists()
 
-
-class TestSettleWithoutEntry:
-    def test_reservation_released_when_entry_vanished(self, monkeypatch):
-        calls = []
-
-        class FakeMetering:
-            @staticmethod
-            async def commit_reservation(rid):
-                calls.append(("commit", rid))
-
-            @staticmethod
-            async def release_reservation(rid):
-                calls.append(("release", rid))
-
-        monkeypatch.setattr(app_module, "BILLING_ENABLED", True)
-        monkeypatch.setattr(app_module, "cloud", types.SimpleNamespace(metering=FakeMetering), raising=False)
-        monkeypatch.setattr(app_module, "jobs", {})
-        job = {"status": "processing", "reservation_id": "res-1"}
-        asyncio.run(app_module._settle_reservation("gone", job))
-        assert calls == [("release", "res-1")]

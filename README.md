@@ -38,8 +38,6 @@ leaves your box: Claude only sees the transcript and still frames.
   layout, hooks, edits, Studio...) in Settings. Every Claude call is recorded:
   each job shows its tokens per step, and Settings shows the totals per day
   and per step.
-- **Agents** — the same pipeline as an MCP server, a REST API with completion
-  webhooks, a CLI and an agent skill.
 
 ## Requirements
 
@@ -93,7 +91,6 @@ start of its run when the server is back. Finished jobs are kept 24 hours
 | **Usage** | Tokens and calls of the last day, 7 or 30 days, per step and per day (`output/.usage.jsonl`). Each job's own breakdown is in its view and on the Queue page. |
 | **Publishing** | Your Upload-Post key and the profile to post as. |
 | **Dubbing** | Your ElevenLabs key for the **dub voice** button on a clip. |
-| **Agents** | How to connect Claude Code, Cursor or another MCP client to this server. |
 
 Keys you type in the dashboard stay in your browser (lightly obfuscated in
 `localStorage`), never on the server.
@@ -112,28 +109,11 @@ The job log shows each step, and every Claude call as one line with its step,
 model, tokens and time. Filter it to key steps, Claude calls or problems,
 search it, copy or download it.
 
-## Agents and automation
+## API
 
-Interactive API docs live at <http://localhost:8000/docs>.
-
-**MCP** — Claude Code, Cursor or any MCP client can clip, check and publish:
-
-```bash
-claude mcp add --transport http shorts-maxxing http://localhost:8000/mcp
-# or without the web server running, over stdio:
-claude mcp add shorts-maxxing -- python mcp_stdio.py
-```
-
-Tools: `process_video`, `create_upload`, `get_job_status`, `list_clips`,
-`add_subtitles`, `recut_clip`, `publish_clip`.
-
-**REST + webhooks** — `POST /api/process` with `{"url": "...", "acknowledged": true}`
-queues a job; add `webhook_url` (and `webhook_secret`) to get one `POST` when
-it ends, signed `X-OpenShorts-Signature: sha256=<hmac>` when a secret is set.
-`GET /api/jobs` lists every job with its status and token usage.
-
-**CLI** — `cli/` (`OPENSHORTS_API_URL=http://localhost:8000 openshorts process <url> --wait`).
-**Agent skill** — `skills/openshorts/`. **n8n** — `examples/n8n/`.
+Interactive API docs live at <http://localhost:8000/docs>. `POST /api/process`
+with `{"url": "...", "acknowledged": true}` queues a job; `GET /api/jobs` lists
+every job with its status and token usage.
 
 ## GPU (optional, NVIDIA)
 
@@ -179,5 +159,4 @@ Architecture notes for each subsystem are in [`docs/architecture/`](docs/archite
 ## License
 
 MIT (see [LICENSE](LICENSE)). shorts maxxing is built on
-[OpenShorts](https://github.com/mutonby/openshorts); the `cloud/` directory
-keeps its own license (see [NOTICE](NOTICE)).
+[OpenShorts](https://github.com/mutonby/openshorts) (see [NOTICE](NOTICE)).

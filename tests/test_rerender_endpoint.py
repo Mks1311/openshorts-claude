@@ -339,9 +339,3 @@ class TestRerenderPersistence:
         assert "world" not in by_text
 
 
-class TestMcpTool:
-    def test_recut_clip_is_registered(self):
-        import mcp_server
-        names = [t["name"] for t in mcp_server.TOOLS]
-        assert "recut_clip" in names
-        assert "recut_clip" in mcp_server._TOOL_IMPLS

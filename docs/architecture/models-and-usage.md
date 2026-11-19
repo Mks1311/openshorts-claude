@@ -28,8 +28,7 @@ call with no task is counted as `other` on the default model.
 
 `GET /api/settings/models` lists the tasks, their default, pick and effective
 model, and the choices Settings offers; `PUT` takes `{"models": {task: model |
-null}}` (null restores the default). Self-host only: 404 when
-`BILLING_ENABLED`.
+null}}` (null restores the default).
 
 ## Usage records
 

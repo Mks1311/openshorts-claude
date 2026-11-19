@@ -9,14 +9,14 @@ goes back in line instead of failing.
 """
 import asyncio
 import os
-import sys
 import threading
 import time
-import types
 
 import pytest
 
 import yt_account
+
+NETSCAPE = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tx\n"
 
 LIMITED = ("ERROR: [youtube] abc: Video unavailable. This content isn't available, try again "
            "later. Your account has been rate-limited by YouTube for up to an hour.")
@@ -133,134 +133,6 @@ def test_requests_keep_their_distance(monkeypatch):
     assert time.time() - start >= 0.55               # two gaps of 0.3 s
 
 
-# --- the metering probe -------------------------------------------------------
-
-metering = pytest.importorskip("cloud.metering")
-NETSCAPE = "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSID\tx\n"
-
-
-def _fake_ytdl(monkeypatch, calls, limited=True):
-    class _YDL:
-        def __init__(self, opts):
-            self.opts = opts
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def extract_info(self, url, download=False):
-            authed = bool(self.opts.get("cookiefile"))
-            calls.append({"proxy": self.opts.get("proxy"), "cookies": authed})
-            if authed and limited:
-                raise RuntimeError(LIMITED)
-            return {"extractor": "youtube", "duration": 600,
-                    "formats": [{"height": 1080, "vcodec": "avc1"}, {"height": 360, "vcodec": "avc1"},
-                                {"vcodec": "none"}]}
-
-    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=_YDL))
-
-
-@pytest.fixture
-def probe_env(monkeypatch):
-    import security_utils
-    monkeypatch.setattr(security_utils, "assert_public_url", lambda u: u)
-    monkeypatch.setenv("STATIC_PROXY_URLS", "http://s1,http://s2,http://s3")
-    monkeypatch.setenv("PROXY_URL", "http://paid")
-    monkeypatch.setenv("YOUTUBE_COOKIES", NETSCAPE)
-    monkeypatch.setenv("BGUTIL_BASE_URL", "http://bgutil")      # an HD (cookies) strategy exists
-    monkeypatch.delenv("DIRECT_FIRST", raising=False)
-    metering._probe_facts.clear()
-    metering.pop_paid_probe_events()
-    yield
-    metering.pop_paid_probe_events()
-
-
-def test_the_probe_stops_sending_the_cookies_once_the_account_is_limited(probe_env, monkeypatch):
-    calls = []
-    _fake_ytdl(monkeypatch, calls)
-    assert metering.probe_url_minutes(URL) == 10.0
-    # One request with the cookies, the answer that it is limited, then the
-    # anonymous step of that route, which has the answer.
-    assert [c["cookies"] for c in calls] == [True, False]
-    assert yt_account.cooling_down() == 0                 # one answer is not a shut account
-
-    metering.probe_url_minutes(URL)
-    metering.probe_url_minutes(URL)                       # three in a row: shut
-    assert yt_account.cooling_down() > 0
-    calls.clear()
-    assert metering.probe_url_minutes(URL) == 10.0
-    assert [c["cookies"] for c in calls] == [False]       # during the cooldown: none at all
-
-
-def test_the_next_route_is_still_asked_after_one_limit_answer(probe_env, monkeypatch):
-    """The limit is often on one exit IP: the second route has the video."""
-    calls = []
-
-    class _YDL:
-        def __init__(self, opts):
-            self.opts = opts
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def extract_info(self, url, download=False):
-            authed = bool(self.opts.get("cookiefile"))
-            calls.append((self.opts.get("proxy"), authed))
-            if authed and len([c for c in calls if c[1]]) == 1:
-                raise RuntimeError(LIMITED)                 # the first route only
-            if not authed:
-                raise RuntimeError("Sign in to confirm you’re not a bot")
-            return {"extractor": "youtube", "duration": 600}
-
-    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=_YDL))
-    assert metering.probe_url_minutes(URL) == 10.0
-    authed = [c for c in calls if c[1]]
-    assert len(authed) == 2 and authed[0][0] != authed[1][0]    # a second route, with the cookies
-
-
-def test_a_limited_video_is_not_asked_on_every_route(probe_env, monkeypatch):
-    """Anonymous fails too (bot check): the probe walks every route, and the
-    cookies go out twice (ANSWERS_PER_VIDEO), not once per route."""
-    calls = []
-
-    class _YDL:
-        def __init__(self, opts):
-            self.opts = opts
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def extract_info(self, url, download=False):
-            authed = bool(self.opts.get("cookiefile"))
-            calls.append(authed)
-            raise RuntimeError(LIMITED if authed else "Sign in to confirm you’re not a bot")
-
-    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=_YDL))
-    monkeypatch.setattr(metering, "_ffprobe_url_seconds", lambda *a, **k: 0)
-    with pytest.raises(ValueError):
-        metering.probe_url_minutes(URL)
-    assert calls.count(True) == yt_account.ANSWERS_PER_VIDEO == 2 and calls.count(False) >= 3
-
-
-def test_the_quality_gate_reuses_what_the_probe_just_learned(probe_env, monkeypatch):
-    calls = []
-    _fake_ytdl(monkeypatch, calls, limited=False)
-    assert metering.probe_facts(URL) is None
-    metering.probe_url_minutes(URL)
-    facts = metering.probe_facts(URL)
-    assert facts["max_height"] == 1080 and facts["duration"] == 600
-    metering._probe_facts[URL]["at"] -= 3600
-    assert metering.probe_facts(URL) is None              # too old to trust
-
-
 # --- the job: wait for the account instead of failing ---------------------------
 
 app_module = pytest.importorskip("app")
@@ -345,8 +217,6 @@ def test_a_video_stopped_by_the_account_limit_goes_back_in_line(api, monkeypatch
     assert "auto_retries" not in job and "yt_limited" not in job      # its real retry is intact
     assert 900 <= waits[0] <= 900 + 150                               # after the cooldown
     assert any(l.startswith("⏳ YouTube is limiting downloads") for l in job["logs"])
-    from log_view import friendly_logs
-    assert any("YouTube is limiting downloads" in l for l in friendly_logs(job["logs"]))
 
 
 def test_it_waits_a_few_times_then_fails_for_real(api):
@@ -455,30 +325,3 @@ def test_each_account_has_its_own_slots(two_accounts, monkeypatch):
             assert time.time() - t < 0.2
 
 
-def test_the_probe_moves_to_the_second_account(probe_env, two_accounts, monkeypatch):
-    calls = []
-
-    class _YDL:
-        def __init__(self, opts):
-            self.opts = opts
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def extract_info(self, url, download=False):
-            ck = self.opts.get("cookiefile")
-            text = open(ck).read() if ck else ""
-            calls.append((self.opts.get("proxy"), "second-" in text if ck else None))
-            if ck and len([c for c in calls if c[1] is not None]) == 1:
-                raise RuntimeError(LIMITED)               # whichever account went first
-            if not ck:
-                raise RuntimeError("Sign in to confirm you’re not a bot")
-            return {"extractor": "youtube", "duration": 600}
-
-    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=_YDL))
-    assert metering.probe_url_minutes(URL) == 10.0
-    authed = [c for c in calls if c[1] is not None]
-    assert len(authed) == 2 and authed[0][1] != authed[1][1]     # the other account answered

@@ -1,7 +1,6 @@
 import screencast_layout
 from screencast_layout import (
     content_side,
-    overlapping_width,
     screencast_filtergraph,
     speaker_crop,
 )
@@ -46,30 +45,6 @@ class TestSpeakerCrop:
     def test_corner_presenter_is_clamped_not_dropped(self):
         w, _h, x, _y = speaker_crop(1920, 1080, 1080, 1312, (1900, 1000))
         assert x == 1920 - w
-
-
-class TestOverlappingWidth:
-    def test_no_ranges_means_no_width(self):
-        assert overlapping_width(0, 10, []) == 0.0
-
-    def test_returns_the_width_of_an_overlapping_range(self):
-        assert overlapping_width(5, 15, [(0, 20, "chart", 0.7)]) == 0.7
-
-    def test_ignores_ranges_that_do_not_overlap(self):
-        assert overlapping_width(30, 40, [(0, 20, "chart", 0.9)]) == 0.0
-
-    def test_a_brush_of_overlap_does_not_count(self):
-        # Under MIN_OVERLAP_SECONDS: a scene that merely touches the range.
-        assert overlapping_width(19.9, 30, [(0, 20, "chart", 0.9)]) == 0.0
-
-    def test_widest_overlapping_range_wins(self):
-        ranges = [(0, 20, "ticker", 0.15), (0, 20, "spreadsheet", 0.95)]
-        assert overlapping_width(5, 15, ranges) == 0.95
-
-    def test_corner_ticker_width_is_reported_not_swallowed(self):
-        # The gate lives in detect_content_ranges; this function must report
-        # small widths faithfully so that gate can do its job.
-        assert overlapping_width(5, 15, [(0, 20, "ticker", 0.15)]) == 0.15
 
 
 class TestScreencastFiltergraph:

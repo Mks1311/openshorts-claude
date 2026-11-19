@@ -280,6 +280,3 @@ def translate_video(
         time.sleep(poll_interval)
 
 
-def get_supported_languages() -> dict:
-    """Return dict of supported language codes and names."""
-    return SUPPORTED_LANGUAGES.copy()

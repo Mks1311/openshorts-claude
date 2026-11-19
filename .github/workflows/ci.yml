@@ -8,21 +8,6 @@ on:
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
-    # A throwaway Postgres for the tests that need the real schema (citext,
-    # jsonb, row locks): tests/test_support_ops.py. They skip without it.
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_PASSWORD: test
-          POSTGRES_DB: openshorts_test
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 5s
-          --health-timeout 5s --health-retries 10
-    env:
-      TEST_DATABASE_URL: postgresql+asyncpg://postgres:test@localhost:5432/openshorts_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,14 +17,12 @@ jobs:
       # heavy ML stack (torch/ultralytics/mediapipe/faster-whisper) — the
       # pipeline modules import those lazily behind their feature gates, and
       # the tests exercise the gated-off paths. numpy+opencv cover the layout
-      # modules, fastapi/boto3/PyJWT/python-multipart cover importing app.py
-      # for the MCP endpoint tests, asyncpg
-      # reaches the Postgres service.
+      # modules, fastapi/boto3/python-multipart cover importing app.py.
       - name: Install test dependencies
         run: >
-          pip install pytest pillow httpx pydantic sqlalchemy greenlet numpy
+          pip install pytest pillow httpx pydantic numpy
           opencv-python-headless python-dotenv fastapi boto3
-          PyJWT email-validator python-multipart asyncpg
+          python-multipart
       - name: Run tests
         run: pytest tests/ -v
 

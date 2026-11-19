@@ -194,14 +194,6 @@ def _face_centre(candidates, frame_w):
     return box[0] + box[2] / 2.0, box[1] + box[3] / 2.0
 
 
-def overlapping_width(scene_start, scene_end, ranges):
-    """Widest content the scene overlaps, as a fraction of frame width.
-
-    0.0 when the scene overlaps nothing, which leaves its routing untouched.
-    """
-    return overlapping_range(scene_start, scene_end, ranges)[0]
-
-
 def presenter_cam(scene_start, scene_end, ranges):
     """Whether the shot check saw a live webcam window over this scene's screen.
 

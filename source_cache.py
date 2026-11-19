@@ -27,7 +27,7 @@ and the next job that asks for that id takes the file instead of downloading:
 
 Entries live ``SOURCE_CACHE_HOURS`` (48) since they were stored, and the
 whole cache stays under ``SOURCE_CACHE_MAX_GB`` (150), least recently used
-out first. Off unless ``SOURCE_CACHE_DIR`` is set (Cloud sets it to a dot
+out first. Off unless ``SOURCE_CACHE_DIR`` is set (set it to a dot
 directory of the output dir: never served by ``/videos``, never swept by the
 job sweeps). Nothing here is personal data: public video files keyed by their
 YouTube id, with no user or job attached.
@@ -331,53 +331,6 @@ def store_transcript(url, duration, transcript, source_path):
         return True
     except Exception as e:
         print(f"⚠️ Could not keep the transcript in the download cache ({type(e).__name__}: {e}).")
-        return False
-
-
-def _probe_path(vid):
-    return os.path.join(cache_dir(), f"{vid}.probe.json")
-
-
-def probe_get(url):
-    """``{"seconds", "max_height"}`` from a probe of this video in the last
-    ``SOURCE_CACHE_HOURS``, or None."""
-    if not enabled():
-        return None
-    vid = video_id(url)
-    if not vid:
-        return None
-    data = _read_json(_probe_path(vid))
-    try:
-        if not data or not (0 <= time.time() - float(data["at"]) <= ttl_seconds()):
-            return None
-        seconds = float(data["seconds"])
-        if not 0 < seconds < 7 * 86400:
-            return None
-        height = data.get("max_height")
-        height = int(height) if isinstance(height, (int, float)) and height > 0 else None
-    except (KeyError, TypeError, ValueError):
-        return None
-    print(f"♻️ Video length known from the download cache ({vid}): no YouTube request.")
-    return {"seconds": seconds, "max_height": height}
-
-
-def probe_put(url, seconds, max_height=None):
-    """Remember what a probe learned about this video (best effort)."""
-    if not enabled():
-        return False
-    vid = video_id(url)
-    try:
-        seconds = float(seconds)
-    except (TypeError, ValueError):
-        return False
-    if not vid or not 0 < seconds < 7 * 86400:
-        return False
-    try:
-        os.makedirs(cache_dir(), exist_ok=True)
-        _write_json(_probe_path(vid), {"seconds": seconds, "at": time.time(),
-                                       "max_height": int(max_height) if max_height else None})
-        return True
-    except Exception:
         return False
 
 

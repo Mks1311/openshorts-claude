@@ -11,7 +11,6 @@ import LogPanel from './components/LogPanel';
 import UsageCard from './components/UsageCard';
 import { ModelPicker, UsageSummary } from './components/ModelSettings';
 import { useJobs, isActive, deleteJob } from './lib/jobs';
-import McpConnectCard from './components/McpConnectCard';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
 import { clipProgress, jobStage } from './lib/clipProgress';
@@ -848,13 +847,6 @@ function App() {
                     <KeyField id="elevenlabs" label="ElevenLabs API key" value={elevenLabsKey} onChange={setElevenLabsKey}
                       placeholder="sk_…" saveLabel="save" saved={keySaved === 'elevenlabs'}
                       onSave={() => { localStorage.setItem('elevenLabsKey_v1', encrypt(elevenLabsKey)); saveKey('elevenlabs'); }} />
-                  </SettingsSection>
-
-                  <SettingsSection eyebrow="Agents" title="drive it from claude code or n8n">
-                    <p className="text-sm text-muted leading-relaxed mb-4">
-                      The backend is also an MCP server: an agent can submit a video, follow the job, recut and caption clips and post them.
-                    </p>
-                    <McpConnectCard />
                   </SettingsSection>
                 </div>
                 <p className="text-xs text-muted mt-4 px-1">

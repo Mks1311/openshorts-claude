@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-shorts maxxing (forked from OpenShorts; module, env and repo names still say openshorts) is a self-hosted vertical video generator that turns long YouTube videos or local uploads into short 9:16 clips for TikTok, Instagram Reels and YouTube Shorts. Jobs run one at a time from a queue (`MAX_CONCURRENT_JOBS=1` on self-host). Every AI step runs on Claude through the headless `claude` CLI (`claude_cli.py`, via `llm_backend.py`) on the signed-in Claude subscription: no API key. Each call belongs to a task (`claude_cli.TASKS`) whose model is picked in Settings, and its tokens are recorded per job and per task. Prompts and answer schemas live in `llm_prompts.py`. Cloud edition code (`BILLING_ENABLED`, `cloud/`) is still present but unused.
+shorts maxxing (forked from OpenShorts; module, env and repo names still say openshorts) is a self-hosted vertical video generator that turns long YouTube videos or local uploads into short 9:16 clips for TikTok, Instagram Reels and YouTube Shorts. Jobs run one at a time from a queue (`MAX_CONCURRENT_JOBS=1`). Every AI step runs on Claude through the headless `claude` CLI (`claude_cli.py`, via `llm_backend.py`) on the signed-in Claude subscription: no API key. Each call belongs to a task (`claude_cli.TASKS`) whose model is picked in Settings, and its tokens are recorded per job and per task. Prompts and answer schemas live in `llm_prompts.py`. The dashboard is the only client: there is no MCP server, CLI, webhook or agent upload API (they were removed; git history has them).
 
 ## Development Commands
 
@@ -23,7 +23,7 @@ pytest tests/ -v                 # CI runs this without the heavy ML stack
 
 ## Pipeline
 
-Ingest (yt-dlp or upload) → transcription (word timestamps) → scene detection → Claude picks moments (15-60 s) → FFmpeg cut → vertical reframing → effects/subtitles → hook overlay → optional ElevenLabs dubbing → S3/R2 backup → optional social posting via Upload-Post.
+Ingest (yt-dlp or upload) → transcription (word timestamps) → scene detection → Claude picks moments (15-60 s) → FFmpeg cut → vertical reframing → effects/subtitles → hook overlay → optional ElevenLabs dubbing → optional S3 backup → optional social posting via Upload-Post.
 
 ## Key Files
 
@@ -31,9 +31,7 @@ Ingest (yt-dlp or upload) → transcription (word timestamps) → scene detectio
 - `app.py`: FastAPI server, job queue, REST endpoints, deploy handover/drain.
 - `clip_selection.py`, `layout_picker.py`, `reframe_v2.py`, `split_layout.py`, `screencast_layout.py`, `camera_inset.py`: moment picking and layouts.
 - `editor.py` (Claude edit plans → FFmpeg effects), `pro_mode.py` (talking-head re-edit), `hooks.py` (hook overlays), `subtitles.py` (SRT/ASS, burning), `translate.py` (ElevenLabs dubbing), `thumbnail.py`.
-- `mcp_server.py`, `mcp_stdio.py`: MCP over HTTP and stdio.
-- `cloud/`: auth, API keys, metering, billing, lifecycle emails, account erasure, autopilot, proxy ledger, alerts, queue watch.
-- `dashboard/src/App.jsx`: the dashboard shell (Clips, Queue, YouTube Studio, Settings); `components/QueuePage.jsx` + `lib/jobs.js` (the `/api/jobs` feed), `components/LogPanel.jsx`, `components/ModelSettings.jsx` (models and usage); `lib/serverConfig.js` reads `/api/config`. The billing, sign-in and account screens were removed from the UI; their backend (`cloud/`) stays dormant while `BILLING_ENABLED` is off.
+- `dashboard/src/App.jsx`: the dashboard shell (Clips, Queue, YouTube Studio, Settings); `components/QueuePage.jsx` + `lib/jobs.js` (the `/api/jobs` feed), `components/LogPanel.jsx`, `components/ModelSettings.jsx` (models and usage); `lib/serverConfig.js` reads `/api/config`. Remotion previews and exports render in the browser (`lib/renderInBrowser.js`).
 
 ## Subsystem reference (read before touching)
 
@@ -42,12 +40,8 @@ Ingest (yt-dlp or upload) → transcription (word timestamps) → scene detectio
 - Models per task, token usage records → `docs/architecture/models-and-usage.md`
 - Thumbnail Studio → `docs/architecture/thumbnails.md`
 - Pro mode (talking-head re-edit, per-clip switch) → `docs/architecture/pro-mode.md`
-- API endpoints, API keys, MCP, OAuth, webhooks → `docs/architecture/agent-access.md`
-- Autopilot → `docs/architecture/autopilot.md`
-- Free-plan watermark (served `wm_` copy, unmark on upgrade) → `docs/architecture/watermark.md`
-- Quota wall, free overflow, lifecycle emails, cancel flow, survey, GDPR erasure, paid-source archive, support-ops API → `docs/architecture/billing-and-account.md`
 - Concurrency/VRAM, auto-retry, deploy handover and drain → `docs/architecture/jobs-and-deploys.md`
-- Download routing, yt-dlp clients, paid proxy ledger → `docs/architecture/proxy-routing.md`
+- Download routing, yt-dlp clients → `docs/architecture/proxy-routing.md`
 
 ## Hard rules
 
@@ -59,7 +53,8 @@ Ingest (yt-dlp or upload) → transcription (word timestamps) → scene detectio
 - Mouth activity is normalised per speaker before comparing (`normalise_activity`).
 - The reframe render runs in one GPU pass (`gpu_render` + `osrender/`) built from the scenes' own filtergraphs: a layout graph that `gpu_render.layers_from_graph` cannot read silently renders through ffmpeg, so keep new layouts to crop/scale/gblur/overlay/vstack/pad and run `tests/test_gpu_render_equivalence.py` on a GPU. After editing `osrender/src/kernels.cu`, regenerate `kernels.ptx` (see `osrender/README.md`).
 - Pro mode (`pro_mode.py`) renders frame by frame on the CPU: always through `pro_mode.run` (own process, host slot), never inside the API or a job thread, and `PRO_MODE=auto` stays opt-in. The pro file is a `recut_` with its `recipe`; never a new filename prefix.
-- Canonical files are always clean; the free-plan mark exists only on the served `wm_` copy (`main.mark_delivery` / `app._deliver`). While a job has `.marked`, `/videos` refuses its clean deliverables.
+- `/videos` and `/thumbnails` serve only what `media_auth.is_servable` allows: the job directories also hold manifests, transcripts and checkpoints.
+- The free-plan watermark (`watermarked.py`, `main.mark_delivery`, `wm_` copies) is dormant: nothing sets `WATERMARK` any more, but the `wm_` naming still runs through recut and the clip editor.
 
 **Clip selection**
 - The scoring pass ranks every window (global top N), never "choose up to K per batch". The `min_clips` floor is enforced in code.
@@ -69,39 +64,23 @@ Ingest (yt-dlp or upload) → transcription (word timestamps) → scene detectio
 
 **Jobs, GPU, deploys**
 - Call `transcribe_backends.release_models()` after any ASR (job processes and in-API transcriptions alike). Size `MAX_CONCURRENT_JOBS` by free VRAM first.
-- `DRAIN_TIMEOUT_SECONDS` must stay below the deployment's (Coolify) stop grace period. The image must ship `curl` for the platform health check.
-- A drain-cancelled job keeps its manifest and reservation and is resumed, never marked failed or completed.
-- The disk sweeps and size caps delete only what `_job_is_active` / `_upload_is_live` call dead: a submission counts as live from its `_begin_job_dir` (source still streaming in) and an agent upload slot until it expires.
-- Whatever is read back from a job directory (recipes, metadata, sidecars, subtitles, log lines) is data from possibly another machine: numbers as numbers, text as text, never pasted into an ffmpeg filter graph, a path or markup. A filter string that is not a plain chain of `editor._ALLOWED_FILTERS` is not run.
+- `DRAIN_TIMEOUT_SECONDS` must stay below the deployment's stop grace period. The image must ship `curl` for the platform health check.
+- A drain-cancelled job keeps its manifest and is resumed, never marked failed or completed.
+- The disk sweeps and size caps delete only what `_job_is_active` / `_upload_is_live` call dead: a submission counts as live from its `_begin_job_dir` (source still streaming in).
+- Whatever is read back from a job directory (recipes, metadata, sidecars, subtitles, log lines) is data: numbers as numbers, text as text, never pasted into an ffmpeg filter graph, a path or markup. A filter string that is not a plain chain of `editor._ALLOWED_FILTERS` is not run.
+- Pipeline subprocesses get `app.child_env()`: the server's API keys (`CHILD_ENV_DENYLIST`) never reach yt-dlp or ffmpeg.
 
 **Download proxies**
-- Route order is direct → static → paid (per-GB `PROXY_URL`). Never use the paid proxy for non-YouTube URLs, nor for failures another IP cannot fix (`static_failure_warrants_paid`).
+- Route order is direct → static (`STATIC_PROXY_URLS`) → `PROXY_URL`. Never use `PROXY_URL` for non-YouTube URLs.
 - The probe also carries `YOUTUBE_COOKIES`, like the download does; first attempt with cookies, second anonymous, on probe and download alike.
 - Keep the explicit `yt_clients.py` client list; never put `player_skip: webpage` back. `noplaylist` always; non-video URLs refused by an allowlist.
-- Every yt-dlp extraction that sends `YOUTUBE_COOKIES` takes its cookie file from a `yt_account.Session` (one of the configured accounts, `YOUTUBE_COOKIES_2`.. add more) and runs inside its `request()`, and none is sent while `yt_account.cooling_down()`: each account's budget is shared by every probe and download. A failure that is only the account limit is retried after the cooldown (`YT_ACCOUNT_LIMITED`), never reported as a broken video. An age-restricted refusal moves the video to another account (`Session.age_gated`), never to the paid proxy.
-- A YouTube video is fetched once per `SOURCE_CACHE_HOURS` (`source_cache.py`: source, transcript and probe by video id). Only whole sources over a free route go in (never ranged, never the per-GB proxy's 720p); a new dot entry of `output/` that holds data stays out of `app._output_jobs_size`.
-- `DOWNLOAD_SKIP_STATICS` only when the probe saw every static bot-checked. `PAID_PROXY_DAILY_MB` is the hard daily ceiling. Never keep `PROXY_URL` in a local `.env`.
-
-**Agent access**
-- MCP stdio: swap `sys.stdout` for stderr **before importing `app`**, and enter the app lifespan.
-- Webhook URLs go through `security_utils.assert_public_url` at submit AND at delivery.
-- API-key auth can never manage keys, consent to OAuth, touch billing or delete the account (`get_session_user_required`). OAuth tokens are ordinary `osk_` keys that carry their scope (`cloud/scopes.py`): a new MCP tool endpoint joins `_MCP_ROUTES`.
-- Cloud `/videos` and `/thumbnails` answer only to a signature, the owner's media token or the owner's credentials (`app._authorize_media`). A `/videos` request is sent to storage (`cloud/media_redirect.py`) only for the owner's own browser and only for a file a `user_videos` row names: never a free job's clean twin, never in exchange for a signed link alone; an edit that rewrites a file calls `hold` before and `forget` after its archive. Any media URL handed outside the dashboard (MCP, webhook, API) goes through `_signed_media_url` / `media_auth.sign_absolute_url`; a new job-like directory writes `.owner`.
-- The Google callback redirects with a single-use code bound to the dashboard's `cc` challenge, never the session JWT (`/api/auth/exchange`).
+- Every yt-dlp extraction that sends `YOUTUBE_COOKIES` takes its cookie file from a `yt_account.Session` (one of the configured accounts, `YOUTUBE_COOKIES_2`.. add more) and runs inside its `request()`, and none is sent while `yt_account.cooling_down()`: each account's budget is shared by every probe and download. A failure that is only the account limit is retried after the cooldown (`YT_ACCOUNT_LIMITED`), never reported as a broken video. An age-restricted refusal moves the video to another account (`Session.age_gated`), never to the proxy.
+- A YouTube video is fetched once per `SOURCE_CACHE_HOURS` (`source_cache.py`: source, transcript and probe by video id). Only whole sources over a free route go in (never ranged, never the `PROXY_URL` 720p); a new dot entry of `output/` that holds data stays out of `app._output_jobs_size`.
+- `DOWNLOAD_SKIP_STATICS` only when the probe saw every static bot-checked. Never keep `PROXY_URL` in a local `.env`.
 - yt-dlp and server-side scrapes run inside `ssrf_guard.guarded()`: redirects and DNS answers are checked at connect time, not only the submitted URL.
 
-**Billing, account, privacy**
-- GDPR erasure order is fixed: Stripe cancel (abort on failure) → R2 purge → one DB transaction over `USER_OWNED_TABLES`. Never via API key. Every new table referencing `users.id` joins `USER_OWNED_TABLES` (a test enforces it).
-- A paid job's source goes to R2 only under `users/<uid>/<job>/source/` with a random name (`cloud/source_archive.py`): never restored with the project, deleted after `SOURCE_ARCHIVE_DAYS` by the daily sweep, and read back only through `_archived_source` / `_locate_or_fetch_source` after the owner check. A change to its retention changes `docs/compliance/retencion.md` and the privacy policy in the same commit.
-- Coupon ids and promotion codes live only in env / Stripe, never in this repo.
-- Cancel and churn alerts carry the reason and rating, never the user's free text. Deletion reasons are a closed list.
-- `reserve_process_minutes` never reserves more than the balance, whatever the client asks; the source cut travels in the resume manifest.
-- Lifecycle/commercial emails go through `emails.send_commercial_email` (opt-out + unsubscribe headers), once per account per kind.
-- The support-ops API (`cloud/support_ops.py`, `/api/support-ops/v1`) is 404 unless its keys are set, never emails the customer, never calls Stripe and writes only the account in the path; every write is a dry run unless `dry_run: false` + ticket, and returns a `before` that `restore` can write back. A banned account (`users.ban_reason`) authenticates as nobody.
-
 **Public repo**
-- This repository is public: no hosts, IPs, server paths, production metrics, business figures or customer data in code, comments, docs or commit messages.
-- The free slow lane's countries (`FREE_SLOW_LANE_COUNTRIES`) live only in the deployment env: tests and docs use user-assigned codes (`XA`, `XB`), and no user-facing text names a country or region (`cloud/queue_mode.py`).
+- This repository is public: no hosts, IPs, server paths, private metrics or personal data in code, comments, docs or commit messages.
 
 ## CI: a green pipeline closes the task, not the push
 

@@ -51,41 +51,6 @@ def test_an_age_gated_video_moves_to_the_account_it_has_not_tried(two_accounts):
     assert yt_account.resting(0) == 0 and yt_account.resting(1) == 0
 
 
-def test_the_probe_moves_to_an_adult_account(two_accounts, monkeypatch):
-    metering = pytest.importorskip("cloud.metering")
-    import security_utils
-    monkeypatch.setattr(security_utils, "assert_public_url", lambda u: u)
-    monkeypatch.setenv("STATIC_PROXY_URLS", "http://s1,http://s2")
-    monkeypatch.setenv("BGUTIL_BASE_URL", "http://bgutil")
-    monkeypatch.delenv("PROXY_URL", raising=False)
-    monkeypatch.delenv("SOURCE_CACHE_DIR", raising=False)
-    calls = []
-
-    class _YDL:
-        def __init__(self, opts):
-            self.opts = opts
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-        def extract_info(self, url, download=False):
-            ck = self.opts.get("cookiefile")
-            adult = bool(ck) and "adult-" in open(ck).read()
-            calls.append(adult if ck else None)
-            if not ck:
-                raise RuntimeError(AGE_ANON)
-            if not adult:
-                raise RuntimeError(AGE_SIGNED_IN)
-            return {"extractor": "youtube", "duration": 600}
-
-    monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=_YDL))
-    assert metering.probe_url_minutes(URL) == 10.0
-    assert True in calls
-
-
 # --- the download (main.py) -------------------------------------------------
 
 def _download_env(monkeypatch, adult_accounts):

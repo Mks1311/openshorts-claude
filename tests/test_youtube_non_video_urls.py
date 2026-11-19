@@ -6,12 +6,9 @@ entry. In the prod container on 17-sep-2026 one search URL held the probe
 for 2220 s and failed on an entry that "premieres in 4 days", having paid
 the per-GB proxy three times that day for the same nothing.
 """
-import sys
-import types
-
 import pytest
 
-from yt_clients import NotASingleVideo, youtube_non_video_reason
+from yt_clients import youtube_non_video_reason
 
 
 @pytest.mark.parametrize("url", [
@@ -54,36 +51,3 @@ def test_pages_that_are_not_one_video_are_named(url, word):
     assert word in youtube_non_video_reason(url)
 
 
-class TestTheProbeRefusesBeforeAnyRequest:
-    def test_no_ytdlp_call_and_no_paid_event(self, monkeypatch):
-        metering = pytest.importorskip("cloud.metering")
-        import security_utils
-        monkeypatch.setattr(security_utils, "assert_public_url", lambda u: u)
-        monkeypatch.setenv("STATIC_PROXY_URLS", "http://s1")
-        monkeypatch.setenv("PROXY_URL", "http://paid")
-        calls = []
-
-        class _YDL:
-            def __init__(self, opts):
-                calls.append(opts)
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *a):
-                return False
-
-            def extract_info(self, url, download=False):
-                return {"duration": 1}
-
-        monkeypatch.setitem(sys.modules, "yt_dlp", types.SimpleNamespace(YoutubeDL=_YDL))
-        monkeypatch.setattr(metering, "_ffprobe_url_seconds",
-                            lambda url, timeout=30: (_ for _ in ()).throw(AssertionError("ffprobe ran")))
-        metering.pop_paid_probe_events()
-
-        with pytest.raises(NotASingleVideo) as exc:
-            metering.probe_url_minutes("https://www.youtube.com/results?search_query=GAlatins+6")
-
-        assert "search" in str(exc.value)
-        assert calls == []
-        assert metering.pop_paid_probe_events() == []

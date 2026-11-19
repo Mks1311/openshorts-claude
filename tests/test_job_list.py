@@ -17,7 +17,6 @@ app_module = pytest.importorskip("app")
 def jobs(monkeypatch):
     table = {}
     monkeypatch.setattr(app_module, "jobs", table)
-    monkeypatch.setattr(app_module, "BILLING_ENABLED", False)
     monkeypatch.setattr(app_module, "queue_snapshot",
                         lambda jid: {"position": 2, "eta_seconds": 600}
                         if table[jid]["status"] == "queued" else None)
@@ -66,11 +65,6 @@ def test_running_job_carries_its_log(jobs):
 def test_a_stopped_job_says_so(jobs):
     jobs["j"] = {"status": "failed", "stop_requested": True, "logs": _log("Traceback: boom")}
     assert _get().json()["jobs"][0]["error"] == "Stopped before it finished."
-
-
-def test_not_offered_with_billing(jobs, monkeypatch):
-    monkeypatch.setattr(app_module, "BILLING_ENABLED", True)
-    assert _get().status_code == 404
 
 
 def test_label_and_settings_travel_in_the_resume_manifest(tmp_path, monkeypatch):

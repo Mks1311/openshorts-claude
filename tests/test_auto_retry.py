@@ -6,7 +6,6 @@ Users saw "failed" for problems that were entirely ours.
 """
 import asyncio
 import json
-import os
 
 import pytest
 
@@ -24,20 +23,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(app_module, "_running_jobs", set())
     monkeypatch.setattr(app_module, "jobs", {})
     monkeypatch.setattr(app_module, "AUTO_RETRY_DELAY_SECONDS", 0)
-    calls = {"settled": [], "enqueued": []}
-
-    async def fake_settle(job_id, job=None):
-        calls["settled"].append(job_id)
-    for name in ("_archive_managed_job", "_notify_job_webhook", "_record_job_alert",
-                 "_track_proxy_usage", "_notify_clips_ready", "_notify_clip_activity"):
-        async def _noop(*a, **k):
-            return None
-        monkeypatch.setattr(app_module, name, _noop)
-
-    async def _noop2(*a, **k):
-        return None
-    monkeypatch.setattr(app_module, "_autopilot_job_finished", _noop2)
-    monkeypatch.setattr(app_module, "_settle_reservation", fake_settle)
+    calls = {"enqueued": []}
     monkeypatch.setattr(app_module, "_enqueue_job",
                         lambda job_id, priority=2: calls["enqueued"].append((job_id, priority)))
     return root, calls
@@ -108,7 +94,6 @@ class TestWrapper:
         sem = _run_wrapper(monkeypatch, "j1", "failed")
         assert job["status"] == "queued" and job["auto_retries"] == 1
         assert calls["enqueued"] == [("j1", 1)]
-        assert calls["settled"] == []                         # reservation kept
         assert (d / app_module._RESUME_FILE).exists()         # still resumable
         assert (d / "My_Video.mp4").exists() and (d / ".transcript_checkpoint.json").exists()
         assert not (d / "My_Video_clip_1.mp4").exists()
@@ -121,7 +106,7 @@ class TestWrapper:
         job["auto_retries"] = 1
         _run_wrapper(monkeypatch, "j2", "failed")
         assert job["status"] == "failed"
-        assert calls["settled"] == ["j2"] and calls["enqueued"] == []
+        assert calls["enqueued"] == []
         assert not (d / app_module._RESUME_FILE).exists()
 
     def test_content_failure_is_not_retried(self, env, monkeypatch):
@@ -134,7 +119,6 @@ class TestWrapper:
         root, calls = env
         d, job = _job(root, "j4", [])
         sem = _run_wrapper(monkeypatch, "j4", None, raise_cancel=True)
-        assert calls["settled"] == []                         # no refund, no failure
         assert (d / app_module._RESUME_FILE).exists()
         assert sem._value == 1
 

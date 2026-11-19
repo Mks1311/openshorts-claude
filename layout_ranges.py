@@ -19,7 +19,6 @@ Whoever updates a clip's metadata copies them into ``layout_ranges`` so
 /api/subtitle can find them after the sidecar is gone.
 """
 import json
-import os
 
 SIDECAR_SUFFIX = ".layout.json"
 
@@ -103,10 +102,6 @@ def normalise(ranges):
 def split_ranges(ranges):
     """(start, end) pairs of the stretches where captions belong on the seam."""
     return [(r["start"], r["end"]) for r in normalise(ranges) if r["layout"] == "split"]
-
-
-def in_split(t, splits):
-    return any(s <= t < e for s, e in splits or [])
 
 
 def remap(ranges, segments):

@@ -921,7 +921,6 @@ def _download_youtube_video(url, output_dir=".", on_audio=None, allow_paid=True,
     # signed links; refresh through the host's page so yt-dlp gets the file.
     import file_hosts
     url = file_hosts.resolve(url)
-    # Cloud mode rejects these at the probe; this is the self-host path.
     from yt_clients import NotASingleVideo, youtube_non_video_reason
     reason = youtube_non_video_reason(url)
     if reason:
@@ -1177,8 +1176,7 @@ def _download_youtube_video(url, output_dir=".", on_audio=None, allow_paid=True,
     last_err = None
     used_proxy = False
     # Every attempt, with its bytes and failure text: printed as PROXY_ROUTE=
-    # below so app.py can keep a durable trail of WHY a job reached the paid
-    # proxy (the container log rotates within the hour; see cloud/proxy_ledger).
+    # below (app.py keeps it out of the job log).
     attempt_log = []
     account_limited = False
     # Age-restricted: every account tried said no (or nobody is signed in).

@@ -35,8 +35,7 @@ is shown away from what is said.
   per-job rerender lock, walks the served file back to its clean base
   (`_strip_burned_captions`, `_strip_burned_hook`), converts that file, and
   puts back the layers that were on it: the hook from the clip's `auto_hook`,
-  captions through `_reapply_captions` (so in the clip's `caption_style`),
-  the free plan's mark through `_deliver`.
+  captions through `_reapply_captions` (so in the clip's `caption_style`).
 - **Titles** (`pick_titles`, `sanitize_titles`, `place_titles`,
   `write_titles`): one Claude call per conversion (task `pro_mode`) proposes the words;
   on any failure the clip simply has none. The code keeps only
