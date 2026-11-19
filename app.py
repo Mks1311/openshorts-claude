@@ -6173,6 +6173,17 @@ async def youtube_upload(req: YouTubeUploadRequest):
 _youtube_tasks = set()
 
 
+def _clips_best_first(clips):
+    """Clip indices by ``predicted_score``, unscored last: main.clip_render_order,
+    without importing main (its ML stack is not in the API's test env)."""
+    def score(i):
+        try:
+            return float(clips[i].get("predicted_score"))
+        except (TypeError, ValueError, AttributeError):
+            return float("-inf")
+    return sorted(range(len(clips)), key=lambda i: (-score(i), i))
+
+
 def _start_youtube_auto_upload(job_id):
     """A job just completed: upload its top clips when Settings asks for it."""
     if BILLING_ENABLED:
@@ -6193,11 +6204,10 @@ async def _youtube_auto_upload(job_id, cfg):
     shortcut: the wait lives in this process; a restart drops the rest of the
     batch (posted clips are recorded, so a manual upload finishes it)."""
     import youtube_publish as yt
-    import main as _main
     job = jobs.get(job_id) or {}
     clips = (job.get('result') or {}).get('clips') or []
     log = job.get('logs')
-    order = _main.clip_render_order(clips)[:cfg["top_n"]]
+    order = _clips_best_first(clips)[:cfg["top_n"]]
     start = time.time()
     for rank, i in enumerate(order):
         if str(i) in yt.posted(os.path.join(OUTPUT_DIR, job_id)):

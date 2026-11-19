@@ -52,7 +52,7 @@ message. A 401 on the session POST forces one token refresh and retries.
 
 `PUT /api/youtube/auto {enabled, top_n 1-20, privacy, spacing_hours 0-168}`.
 When a job completes (`app._finish_job`), `_youtube_auto_upload` uploads its
-top `top_n` clips by `predicted_score` (`main.clip_render_order`), skipping
+top `top_n` clips by `predicted_score` (`app._clips_best_first`, the order of `main.clip_render_order`), skipping
 clips already posted. With `public` and a spacing, clip k is scheduled at
 start + k × spacing. Out of quota, it sleeps until the reset and goes on;
 not connected or expired stops it; every step is a line in the job's log.
