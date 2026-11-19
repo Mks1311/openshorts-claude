@@ -10,6 +10,7 @@ import Modal from './ui/Modal';
 import SegmentedControl from './ui/SegmentedControl';
 import TikTokDraftNotice from './TikTokDraftNotice';
 import { renderInBrowser } from '../lib/renderInBrowser';
+import { YouTubeUploadButton } from './YouTubePublish';
 
 const QUIET_BTN = 'group flex flex-col items-center justify-center gap-1 py-2.5 sm:py-2 px-1 rounded-input border border-rule hover:bg-paper3 text-[11px] lowercase text-ink2 whitespace-nowrap transition-colors disabled:opacity-45 disabled:cursor-not-allowed';
 
@@ -57,7 +58,7 @@ function formatDuration(clip) {
     return `${String(Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`;
 }
 
-export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUserId, elevenLabsKey, onPlay, onPause, onBulkSubtitle, clipCount = 1, bulkProgress, initialState = null, onStateChange, connectedPlatforms = null, onEditClip = null, onReframeClip = null, onModeChanged = null }) {
+export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUserId, elevenLabsKey, onPlay, onPause, onBulkSubtitle, clipCount = 1, bulkProgress, initialState = null, onStateChange, connectedPlatforms = null, onEditClip = null, onReframeClip = null, onModeChanged = null, youtube = null }) {
     const [showModal, setShowModal] = useState(false);
     // The "why" line is clamped to two lines so cards in a row stay level;
     // when it overflows, a hover (desktop) or tap (touch) shows the whole
@@ -1009,6 +1010,7 @@ export default function ResultCard({ clip, index, jobId, uploadPostKey, uploadUs
                     >
                         <Share2 size={16} className="shrink-0" /> post
                     </button>
+                    <YouTubeUploadButton jobId={jobId} index={index} clip={clip} posted={youtube} className={QUIET_BTN} />
                     <button
                         onClick={(e) => { e.preventDefault(); downloadClip(); }}
                         className={`${QUIET_BTN}${onEditClip ? ' col-span-2' : ''}`}

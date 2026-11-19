@@ -12,6 +12,7 @@ import UsageCard from './components/UsageCard';
 import { ModelPicker, UsageSummary } from './components/ModelSettings';
 import { useJobs, isActive, deleteJob } from './lib/jobs';
 import McpConnectCard from './components/McpConnectCard';
+import { YouTubeSettings } from './components/YouTubePublish';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
 import { clipProgress, jobStage } from './lib/clipProgress';
@@ -254,6 +255,8 @@ function App() {
   const [logs, setLogs] = useState([]);
   const [logTimes, setLogTimes] = useState([]);
   const [jobUsage, setJobUsage] = useState(null);
+  // Clips already on YouTube: {clip index: {url, privacy, ...}} (/api/status).
+  const [youtubePosted, setYoutubePosted] = useState({});
   const progress = useMemo(() => clipProgress(logs), [logs]);
   const stage = useMemo(() => jobStage(logs), [logs]);
   const clipsMaking = status === 'processing' && progress.total > 0;
@@ -261,7 +264,12 @@ function App() {
     try { return window.innerWidth >= 768; } catch { return true; }
   });
   const [processingMedia, setProcessingMedia] = useState(null);
-  const [activeTab, setActiveTab] = useState('dashboard');
+  // Back from Google's consent screen (/api/youtube/callback): open Settings.
+  const [activeTab, setActiveTab] = useState(() => {
+    if (!new URLSearchParams(window.location.search).has('youtube')) return 'dashboard';
+    window.history.replaceState(null, '', window.location.pathname);
+    return 'settings';
+  });
 
   const [sessionRecovered, setSessionRecovered] = useState(false);
   const [jobGone, setJobGone] = useState(false);
@@ -462,6 +470,7 @@ function App() {
           if (data.result) setResults(data.result);
           if (data.partial) setPartialJob(data.partial);
           setJobUsage(data.usage || null);
+          setYoutubePosted(data.youtube || {});
           setQueueInfo(data.status === 'queued' && data.queue ? data.queue : null);
 
           if (data.status === 'completed') {
@@ -596,6 +605,7 @@ function App() {
     setProcessingMedia(null);
     setPartialJob(null);
     setJobUsage(null);
+    setYoutubePosted({});
     setQueueInfo(null);
     setJobError('');
     localStorage.removeItem(SESSION_KEY);
@@ -840,6 +850,12 @@ function App() {
                     )}
                   </SettingsSection>
 
+                  {allJobs && (
+                    <SettingsSection eyebrow="YouTube" title="upload shorts straight to your channel">
+                      <YouTubeSettings />
+                    </SettingsSection>
+                  )}
+
                   <SettingsSection eyebrow="Dubbing" title="dub clips into other languages" badge={<span className="readout">optional</span>}>
                     <p className="text-sm text-muted leading-relaxed mb-4">
                       The <span className="text-ink2">dub voice</span> button on a clip uses <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noopener noreferrer" className="text-ink2 underline underline-offset-2 hover:text-brass">ElevenLabs</a> (billed
@@ -1072,6 +1088,7 @@ function App() {
                           onBulkSubtitle={handleBulkSubtitles}
                           clipCount={results.clips.length}
                           bulkProgress={bulkSub}
+                          youtube={youtubePosted[String(i)] || null}
                         />
                       ))}
                     </div>
