@@ -14,6 +14,7 @@ import math
 import functools
 import heapq
 import asyncio
+from datetime import datetime, timezone
 import signal
 import socket
 from dotenv import load_dotenv
@@ -22,7 +23,7 @@ from contextlib import asynccontextmanager, suppress
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Header, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, RedirectResponse
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
 from s3_uploader import upload_job_artifacts
@@ -2131,6 +2132,7 @@ def _finish_job(job_id, returncode, output_dir):
                     jobs[job_id]['logs'].append(
                         f"⚠️ {missing} of {len(clips)} clips failed to render.")
                 jobs[job_id]['result'] = {'clips': rendered, 'cost_analysis': cost_analysis}
+                _start_youtube_auto_upload(job_id)
         else:
             jobs[job_id]['status'] = 'failed'
             jobs[job_id]['logs'].append("No metadata file generated.")
@@ -2787,6 +2789,8 @@ async def get_status(job_id: str, request: Request):
         # When each line arrived (epoch seconds, parallel to "logs"), or None.
         "log_times": _logs_view[1],
         "result": job.get('result'),
+        # Clips already on YouTube: {clip index: {video_id, url, privacy, ...}}.
+        "youtube": _youtube_posted(job),
         # Position in line and a rough wait while the job is still queued.
         "queue": queue_snapshot(job_id),
         # Set when only the first part of the source was clipped (quota wall
@@ -2794,6 +2798,11 @@ async def get_status(job_id: str, request: Request):
         "partial": job.get('partial'),
         "usage": _job_usage(job),
     }
+
+
+def _youtube_posted(job):
+    import youtube_publish
+    return youtube_publish.posted(job['output_dir']) if job.get('output_dir') else {}
 
 
 def _job_title(job):
@@ -2923,6 +2932,185 @@ async def get_usage(days: float = 7):
     return {"since": since, **claude_cli.summarize(records),
             "days": [{"day": d, **{k: v for k, v in claude_cli.summarize(rs).items() if k != "tasks"}}
                      for d, rs in sorted(by_day.items())]}
+
+
+# ---- Direct YouTube publishing (youtube_publish.py) ----
+
+def _youtube_module():
+    import youtube_publish
+    return youtube_publish
+
+
+def _youtube_http_error(e):
+    return HTTPException(status_code=e.status, detail=str(e))
+
+
+@app.get("/api/youtube/connect")
+async def youtube_connect(request: Request):
+    """Send the browser to Google's consent screen for the upload scope."""
+    yt = _youtube_module()
+    m = re.match(r"^(https?://[^/?#]+)", request.headers.get("referer") or "")
+    try:
+        return RedirectResponse(yt.auth_url(m.group(1) if m else None), status_code=302)
+    except yt.YouTubeError as e:
+        raise _youtube_http_error(e)
+
+
+@app.get("/api/youtube/callback")
+async def youtube_callback(state: str = "", code: str = "", error: str = ""):
+    yt = _youtube_module()
+    if error or not code:
+        yt._pending.pop(state, None)
+        return HTMLResponse("<p>YouTube was not connected. You can close this tab.</p>", status_code=400)
+    try:
+        origin = await asyncio.to_thread(yt.finish_auth, code, state)
+    except (yt.YouTubeError, httpx.HTTPError) as e:
+        import html
+        return HTMLResponse(f"<p>{html.escape(str(e))}</p>", status_code=400)
+    if origin:
+        return RedirectResponse(f"{origin}/?youtube=connected", status_code=302)
+    return HTMLResponse("<p>YouTube connected. You can close this tab.</p>")
+
+
+@app.get("/api/youtube/status")
+async def youtube_status():
+    yt = _youtube_module()
+    return await asyncio.to_thread(yt.status)
+
+
+@app.post("/api/youtube/disconnect")
+async def youtube_disconnect():
+    yt = _youtube_module()
+    await asyncio.to_thread(yt.disconnect)
+    return await asyncio.to_thread(yt.status)
+
+
+class YouTubeAutoSettings(BaseModel):
+    enabled: bool
+    top_n: int = 3
+    privacy: str = "private"
+    spacing_hours: int = 0
+
+
+@app.put("/api/youtube/auto")
+async def youtube_auto(body: YouTubeAutoSettings):
+    yt = _youtube_module()
+    try:
+        yt.save_auto_settings(body.enabled, body.top_n, body.privacy, body.spacing_hours)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return await asyncio.to_thread(yt.status)
+
+
+class YouTubeUploadRequest(BaseModel):
+    job_id: str
+    clip_index: int
+    title: Optional[str] = None
+    description: Optional[str] = None
+    privacy: str = "private"
+    publish_at: Optional[str] = None
+
+
+def _youtube_defaults(clip):
+    return (clip.get('video_title_for_youtube_short') or clip.get('title') or "Short",
+            clip.get('video_description_for_tiktok') or clip.get('video_description_for_instagram') or "")
+
+
+@app.post("/api/youtube/upload")
+async def youtube_upload(req: YouTubeUploadRequest):
+    """Upload one clip as a Short; scheduled (private until publish_at) when
+    publish_at is given. Recorded in the job's .youtube.json."""
+    yt = _youtube_module()
+    if req.privacy not in yt.PRIVACY:
+        raise HTTPException(status_code=400, detail="privacy is private, unlisted or public")
+    try:
+        publish_at = yt.parse_publish_at(req.publish_at) if req.publish_at else None
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"publish_at: {e}")
+    job = jobs.get(req.job_id) if _JOB_ID_RE.match(req.job_id or "") else None
+    clips = ((job or {}).get('result') or {}).get('clips') or []
+    if not 0 <= req.clip_index < len(clips):
+        raise HTTPException(status_code=404, detail="Clip not found")
+    clip = clips[req.clip_index]
+    path = _clip_file(req.job_id, clip, req.clip_index)
+    title, description = _youtube_defaults(clip)
+    try:
+        return await asyncio.to_thread(
+            yt.publish_clip, os.path.join(OUTPUT_DIR, req.job_id), req.clip_index, path,
+            req.title or title, req.description if req.description is not None else description,
+            req.privacy, publish_at)
+    except yt.YouTubeError as e:
+        raise _youtube_http_error(e)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Could not reach YouTube: {type(e).__name__}")
+
+
+_youtube_tasks = set()
+
+
+def _clips_best_first(clips):
+    """Clip indices by ``predicted_score``, unscored last: main.clip_render_order,
+    without importing main (its ML stack is not in the API's test env)."""
+    def score(i):
+        try:
+            return float(clips[i].get("predicted_score"))
+        except (TypeError, ValueError, AttributeError):
+            return float("-inf")
+    return sorted(range(len(clips)), key=lambda i: (-score(i), i))
+
+
+def _start_youtube_auto_upload(job_id):
+    """A job just completed: upload its top clips when Settings asks for it."""
+    import youtube_publish as yt
+    cfg = yt.auto_settings()
+    if not cfg["enabled"] or not yt._read().get("tokens"):
+        return
+    task = asyncio.get_event_loop().create_task(_youtube_auto_upload(job_id, cfg))
+    _youtube_tasks.add(task)
+    task.add_done_callback(_youtube_tasks.discard)
+
+
+async def _youtube_auto_upload(job_id, cfg):
+    """Top ``top_n`` clips by predicted score, ``spacing_hours`` apart when
+    public. Out of quota: wait for the reset and go on.
+
+    shortcut: the wait lives in this process; a restart drops the rest of the
+    batch (posted clips are recorded, so a manual upload finishes it)."""
+    import youtube_publish as yt
+    job = jobs.get(job_id) or {}
+    clips = (job.get('result') or {}).get('clips') or []
+    log = job.get('logs')
+    order = _clips_best_first(clips)[:cfg["top_n"]]
+    start = time.time()
+    for rank, i in enumerate(order):
+        if str(i) in yt.posted(os.path.join(OUTPUT_DIR, job_id)):
+            continue
+        planned = start + rank * cfg["spacing_hours"] * 3600
+        while True:
+            publish_at = None
+            if cfg["privacy"] == "public" and planned > time.time() + 900:
+                publish_at = datetime.fromtimestamp(planned, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            try:
+                path = _clip_file(job_id, clips[i], i)
+                title, description = _youtube_defaults(clips[i])
+                rec = await asyncio.to_thread(yt.publish_clip, os.path.join(OUTPUT_DIR, job_id), i, path,
+                                              title, description, cfg["privacy"], publish_at)
+                if log is not None:
+                    log.append(f"▶️ YouTube: clip {i + 1} uploaded ({rec['privacy']}"
+                               f"{', publishes ' + publish_at if publish_at else ''}): {rec['url']}")
+                break
+            except yt.QuotaExceeded as e:
+                if log is not None:
+                    log.append(f"⏳ YouTube: {e} Clip {i + 1} goes up after the reset.")
+                await asyncio.sleep(yt.next_quota_reset())
+            except (yt.NotConnected, yt.ReconnectNeeded) as e:
+                if log is not None:
+                    log.append(f"⚠️ YouTube auto-upload stopped: {e}")
+                return
+            except (yt.YouTubeError, httpx.HTTPError, HTTPException) as e:
+                if log is not None:
+                    log.append(f"⚠️ YouTube: clip {i + 1} not uploaded: {getattr(e, 'detail', None) or e}")
+                break
 
 
 @app.get("/api/jobs")
@@ -4892,6 +5080,27 @@ def _checked_platforms(platforms) -> List[str]:
 _post_request_owners: dict = {}
 
 
+def _clip_file(job_id, clip, clip_index):
+    """Path of the file to post for a clip of ``jobs[job_id]``; 404 if none.
+
+    The recorded file may be missing (an edit that failed used to record a
+    name it never wrote): then the newest file this clip has, and the clip is
+    pointed back at it."""
+    job_dir = os.path.join(OUTPUT_DIR, job_id)
+    file_path = os.path.join(job_dir, (clip.get('video_url') or '').split('/')[-1])
+    if not os.path.isfile(file_path):
+        meta_files = glob.glob(os.path.join(job_dir, "*_metadata.json"))
+        if meta_files:
+            base_name = os.path.basename(meta_files[0]).replace('_metadata.json', '')
+            newest = _canonical_clip_file(job_dir, base_name, clip_index)
+            if os.path.exists(os.path.join(job_dir, newest)):
+                file_path = os.path.join(job_dir, newest)
+                clip['video_url'] = f"/videos/{job_id}/{newest}"
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="Video file not found")
+    return file_path
+
+
 @app.post("/api/social/post")
 async def post_to_socials(req: SocialPostRequest, request: Request):
     req.platforms = _checked_platforms(req.platforms)
@@ -4914,28 +5123,8 @@ async def post_to_socials(req: SocialPostRequest, request: Request):
 
     try:
         clip = job['result']['clips'][req.clip_index]
-        # Video URL is relative /videos/..., we need absolute file path
-        # clip['video_url'] is like "/videos/{job_id}/{filename}"
-        # We constructed it as: f"/videos/{job_id}/{clip_filename}"
-        # And file is at f"{OUTPUT_DIR}/{job_id}/{clip_filename}"
-        
-        filename = clip['video_url'].split('/')[-1]
-        file_path = os.path.join(OUTPUT_DIR, req.job_id, filename)
-
-        if not os.path.exists(file_path):
-            # The recorded file is not there (an edit that failed used to
-            # record a name it never wrote): post the newest file this clip
-            # does have, and point the clip back at it.
-            job_dir = os.path.join(OUTPUT_DIR, req.job_id)
-            meta_files = glob.glob(os.path.join(job_dir, "*_metadata.json"))
-            if meta_files:
-                base_name = os.path.basename(meta_files[0]).replace('_metadata.json', '')
-                newest = _canonical_clip_file(job_dir, base_name, req.clip_index)
-                if os.path.exists(os.path.join(job_dir, newest)):
-                    filename, file_path = newest, os.path.join(job_dir, newest)
-                    clip['video_url'] = f"/videos/{req.job_id}/{newest}"
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="Video file not found")
+        file_path = _clip_file(req.job_id, clip, req.clip_index)
+        filename = os.path.basename(file_path)
 
         # Construct parameters for Upload-Post API
         # Fallbacks
