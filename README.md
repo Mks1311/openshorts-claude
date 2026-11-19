@@ -33,7 +33,8 @@ leaves your box: Claude only sees the transcript and still frames.
 - **YouTube Studio** — titles, thumbnail text on a frame of the video, and a
   description with chapters, for the long video itself.
 - **Publish** — post or schedule clips to TikTok, Instagram and YouTube through
-  [Upload-Post](https://upload-post.com) (optional, your own key).
+  [Upload-Post](https://upload-post.com) (optional, your own key), or upload
+  Shorts straight to your own YouTube channel (see [YouTube](#youtube-direct-upload)).
 - **Models and usage** — pick the Claude model for each step (moment picking,
   layout, hooks, edits, Studio...) in Settings. Every Claude call is recorded:
   each job shows its tokens per step, and Settings shows the totals per day
@@ -92,6 +93,7 @@ start of its run when the server is back. Finished jobs are kept 24 hours
 | **Models** | The Claude model for each step: pick moments, pick moments in silent videos, layout, hooks, burned-in subtitle check, auto edit, YouTube Studio, pro mode. Every step defaults to `claude-sonnet-5-5`; `haiku` is fastest and lightest on your plan's usage limit, `opus` the strongest. A change applies from the next call, running jobs included. Saved in `output/.models.json`. |
 | **Usage** | Tokens and calls of the last day, 7 or 30 days, per step and per day (`output/.usage.jsonl`). Each job's own breakdown is in its view and on the Queue page. |
 | **Publishing** | Your Upload-Post key and the profile to post as. |
+| **YouTube** | Connect your channel for direct Shorts uploads, and optionally auto-upload each finished job's best clips. |
 | **Dubbing** | Your ElevenLabs key for the **dub voice** button on a clip. |
 | **Agents** | How to connect Claude Code, Cursor or another MCP client to this server. |
 
@@ -151,6 +153,25 @@ TRANSCRIBE_BACKEND=parakeet   # optional, ~2x faster for 25 European languages
 `MAX_CONCURRENT_JOBS` (default 1) runs that many jobs at once; raise it only
 when the card has the VRAM for it (about 4–6 GB per job while it transcribes).
 
+## YouTube (direct upload)
+
+Clips go to your channel through the YouTube Data API, no third party:
+
+1. In Google Cloud, create a project, enable **YouTube Data API v3**, set up the
+   OAuth consent screen (External, Testing, your channel's account as a test
+   user, scope `youtube.upload`) and create a **Web** OAuth client with the
+   redirect URI `http://localhost:8000/api/youtube/callback`.
+2. Put `YOUTUBE_CLIENT_ID` and `YOUTUBE_CLIENT_SECRET` in `.env` and restart.
+3. Settings → YouTube → **connect youtube**. Each clip then has a **youtube**
+   button (title, description, privacy, optional publish time); once uploaded it
+   links to the Short.
+
+Limits to know: an unaudited Google app's uploads stay **private** (make them
+public in YouTube Studio, or pass Google's audit); a Testing app's access lasts
+7 days, after which Settings asks you to reconnect; each upload costs about
+1,600 of the 10,000 daily API units (about 6 uploads a day). Auto-upload waits
+for the quota reset (midnight Pacific) when it runs out.
+
 ## Useful environment variables
 
 | Variable | Default | What it does |
@@ -164,6 +185,8 @@ when the card has the VRAM for it (about 4–6 GB per job while it transcribes).
 | `AUTO_LAYOUT` | `0` | `1` lets Claude pick split / screen layouts on every job. |
 | `WHISPER_MODEL` | `small` | Transcription model (`large-v3-turbo` on a GPU). |
 | `YOUTUBE_COOKIES` | — | Netscape cookies for videos YouTube refuses anonymously. |
+| `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET` | — | Google OAuth web client for direct YouTube uploads. |
+| `YOUTUBE_REDIRECT_URI` | `http://localhost:8000/api/youtube/callback` | Must match the client's redirect URI. |
 | `AWS_*` | — | Optional S3 backup of the clips. |
 
 ## Development

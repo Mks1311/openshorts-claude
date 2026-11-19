@@ -41,6 +41,7 @@ Ingest (yt-dlp or upload) → transcription (word timestamps) → scene detectio
 - Clip count, silent-footage fallback, Claude CLI → `docs/architecture/clip-selection.md`
 - Models per task, token usage records → `docs/architecture/models-and-usage.md`
 - Thumbnail Studio → `docs/architecture/thumbnails.md`
+- Direct YouTube upload (OAuth, Shorts upload, auto-upload) → `docs/architecture/youtube-publishing.md`
 - Pro mode (talking-head re-edit, per-clip switch) → `docs/architecture/pro-mode.md`
 - API endpoints, API keys, MCP, OAuth, webhooks → `docs/architecture/agent-access.md`
 - Autopilot → `docs/architecture/autopilot.md`
