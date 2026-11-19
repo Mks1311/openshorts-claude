@@ -54,8 +54,8 @@ key). `--json-schema` enforces the shape (`llm_prompts.py` holds the schemas
 and prompts) and the answer is validated again with the pydantic schema. Each
 call runs isolated (own system prompt, no tools/settings/MCP, scratch cwd so no
 CLAUDE.md is read) to keep it near 1.5k input tokens. Text questions use
-`LLM_MODEL` (default `sonnet`), frame questions `claude_cli.VISION_MODEL`
-(`haiku`). `main._run_llm_stage` retries an overloaded or rate-limited call
+the model Settings picks for their task (default `claude-sonnet-5-5`, see
+`models-and-usage.md`). `main._run_llm_stage` retries an overloaded or rate-limited call
 (429/5xx/529) and an answer that missed a field.
 
 - Transcript passes of `get_viral_clips`: text, 8 windows per scoring call.

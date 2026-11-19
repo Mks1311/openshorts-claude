@@ -94,9 +94,9 @@ def test_models_can_be_picked_per_task(jobs):
     resp = _call("PUT", "/api/settings/models", json={"models": {"layout": "opus"}})
     assert resp.status_code == 200
     layout = next(t for t in resp.json()["tasks"] if t["id"] == "layout")
-    assert layout["model"] == "opus" and layout["picked"] == "opus" and layout["default"] == "haiku"
+    assert layout["model"] == "opus" and layout["picked"] == "opus" and layout["default"] == "claude-sonnet-5-5"
     reset = _call("PUT", "/api/settings/models", json={"models": {"layout": None}})
-    assert next(t for t in reset.json()["tasks"] if t["id"] == "layout")["model"] == "haiku"
+    assert next(t for t in reset.json()["tasks"] if t["id"] == "layout")["model"] == "claude-sonnet-5-5"
     assert _call("PUT", "/api/settings/models", json={"models": {"layout": "x; rm -rf"}}).status_code == 400
     assert _call("PUT", "/api/settings/models", json={"models": {"nope": "haiku"}}).status_code == 400
 

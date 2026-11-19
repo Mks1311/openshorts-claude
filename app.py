@@ -3271,8 +3271,47 @@ async def run_job_wrapper(job_id):
         print(f"✅ Released slot for job: {job_id}")
     if job is not None:
         await _deliver_job(job_id, job)
+        if job.get('stop_requested') and not BILLING_ENABLED:
+            _discard_job_files(job_id, job)
     else:
         _clear_resume_manifest(job_id)
+
+
+def _discard_job_files(job_id, job=None):
+    """A stopped job leaves nothing on disk: its partial clips, downloaded
+    source and uploaded file go now instead of at the retention sweep. The
+    record stays, so the queue still shows it was stopped. Only called once
+    main.py is gone (or never started)."""
+    shutil.rmtree(os.path.join(OUTPUT_DIR, job_id), ignore_errors=True)
+    for path in glob.glob(os.path.join(UPLOAD_DIR, f"{glob.escape(job_id)}_*")):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    if job is not None:
+        job['result'] = None
+
+
+def _clear_unfinished_job_dirs():
+    """Startup, self-host: drop what failed or stopped jobs left behind. A job
+    dir with neither clips (metadata) nor a resume manifest ended without
+    clips; one with a manifest is resumed instead, so it is kept. Nothing is
+    running yet, so nothing here can be in use."""
+    try:
+        names = os.listdir(OUTPUT_DIR)
+    except OSError:
+        return
+    cleared = 0
+    for name in names:
+        path = os.path.join(OUTPUT_DIR, name)
+        if (name == os.path.basename(THUMBNAILS_DIR) or _not_a_job_dir(name)
+                or not os.path.isdir(path) or os.path.exists(os.path.join(path, _RESUME_FILE))
+                or glob.glob(os.path.join(glob.escape(path), "*_metadata.json"))):
+            continue
+        _discard_job_files(name)
+        cleared += 1
+    if cleared:
+        print(f"🧹 Cleared {cleared} failed or stopped job(s) left on disk.")
 
 
 # --- Delivery, outside the GPU slot -------------------------------------------
@@ -4163,6 +4202,9 @@ def _queue_wait_started(job_id):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Self-host keeps no files of jobs that ended without clips.
+    if not BILLING_ENABLED:
+        _clear_unfinished_job_dirs()
     # Rehydrate finished jobs from disk before serving (survives restarts).
     _recover_jobs_from_disk()
     # Re-enqueue jobs that were mid-processing when we stopped (redeploy). Their
@@ -5927,6 +5969,7 @@ def _job_summary(job_id, job):
         "position": queue["position"] if queue else None,
         "eta_seconds": queue["eta_seconds"] if queue else None,
         "stopping": bool(job.get('stop_requested')) and status in ('queued', 'processing'),
+        "stopped": bool(job.get('stop_requested')) and status == 'failed',
         "error": None,
         "usage": _job_usage(job),
         # The running job's log: the dashboard reads its stage and clip count.
@@ -6021,6 +6064,28 @@ async def list_jobs():
     return {"jobs": out}
 
 
+@app.delete("/api/jobs/{job_id}")
+async def delete_job(job_id: str, request: Request):
+    """Delete a finished, failed or stopped job: it leaves the list and its
+    folder in output/ (clips, source, sidecars) and uploaded file are deleted.
+    A queued or running job is stopped first (POST .../stop).
+
+    shortcut: self-host only, like the job list; the cloud would also have to
+    delete its R2 copies and user_videos rows."""
+    if BILLING_ENABLED:
+        raise HTTPException(status_code=404, detail="Not found")
+    job = jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found")
+    await _assert_job_owner(request, job)
+    if (_presented_status(job_id, job) in ('queued', 'processing')
+            or job_id in _running_jobs or job_id in _delivering_jobs):
+        raise HTTPException(status_code=409, detail="Stop the job before deleting it.")
+    jobs.pop(job_id, None)
+    _discard_job_files(job_id)
+    return {"status": "deleted"}
+
+
 @app.post("/api/jobs/{job_id}/stop")
 async def stop_job(job_id: str, request: Request):
     """Stop a queued or running job for good: main.py and its children are
@@ -6047,6 +6112,7 @@ async def stop_job(job_id: str, request: Request):
         job['status'] = 'failed'
         _clear_resume_manifest(job_id)
         await _notify_job_webhook(job_id)
+        _discard_job_files(job_id, job)
         return {"status": "removed"}
     # Running, or already taken by the worker: run_job / _run_main end it.
     return {"status": "stopping"}

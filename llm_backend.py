@@ -1,9 +1,8 @@
 """The model behind every AI step: Claude through the headless ``claude`` CLI.
 
 ``claude_cli.py`` runs ``claude -p`` on the subscription the CLI is signed in
-to, so no API key is needed. Text questions (moment picking, titles) use
-``LLM_MODEL`` (default ``sonnet``); frame questions (layout, screen check,
-burned-in subtitles, hooks, edit plans) use ``claude_cli.VISION_MODEL``.
+to, so no API key is needed. Each call names its task, and
+``claude_cli.model_for`` picks its model (Settings, else ``claude-sonnet-5-5``).
 Answers are validated with the caller's pydantic schema, so ``main.py`` sees
 one shape everywhere.
 """
@@ -14,7 +13,6 @@ from typing import Optional, Tuple, Type
 
 from pydantic import BaseModel
 
-DEFAULT_MODEL = "sonnet"
 DEFAULT_TIMEOUT = 600.0  # a long scoring batch can take minutes
 
 

@@ -9,14 +9,14 @@ model and is the key usage is counted under.
 
 | Task | Caller | Default |
 |---|---|---|
-| `clips` | `main.get_viral_clips` (score + detail passes) | `sonnet` |
-| `visual_clips` | `main.get_visual_clips` (silent video, frames) | `sonnet` |
-| `layout` | `layout_picker`, `screencast_layout` | `haiku` |
-| `hooks` | `hook_grounding` | `haiku` |
-| `subtitles` | `burned_subtitles` | `haiku` |
-| `edits` | `editor.VideoEditor` (auto edit) | `haiku` |
-| `studio` | `thumbnail.py` (titles, thumbnail text, descriptions) | `sonnet` |
-| `pro_mode` | `pro_mode.write_titles` | `sonnet` |
+| `clips` | `main.get_viral_clips` (score + detail passes) | `claude-sonnet-5-5` |
+| `visual_clips` | `main.get_visual_clips` (silent video, frames) | `claude-sonnet-5-5` |
+| `layout` | `layout_picker`, `screencast_layout` | `claude-sonnet-5-5` |
+| `hooks` | `hook_grounding` | `claude-sonnet-5-5` |
+| `subtitles` | `burned_subtitles` | `claude-sonnet-5-5` |
+| `edits` | `editor.VideoEditor` (auto edit) | `claude-sonnet-5-5` |
+| `studio` | `thumbnail.py` (titles, thumbnail text, descriptions) | `claude-sonnet-5-5` |
+| `pro_mode` | `pro_mode.write_titles` | `claude-sonnet-5-5` |
 
 `claude_cli.model_for(task)`: the pick in `output/.models.json`, else
 `LLM_MODEL` for the text tasks (`clips`, `visual_clips`, `studio`,

@@ -13,7 +13,7 @@ function statusText(job) {
   if (job.status === 'queued') return job.position ? `queued #${job.position}` : 'queued';
   if (job.status === 'processing') return jobProgress(job).stage || 'working';
   if (job.status === 'completed') return `${job.clips} clip${job.clips === 1 ? '' : 's'}`;
-  return 'failed';
+  return job.stopped ? 'stopped' : 'failed';
 }
 
 // The queue at a glance under the new-video form: what runs and waits, then

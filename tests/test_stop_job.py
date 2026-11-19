@@ -121,3 +121,65 @@ def test_a_queued_job_leaves_the_queue_at_once(jobs, monkeypatch):
     assert resp.json() == {"status": "removed"}
     assert jobs["a"]["status"] == "failed"
     assert [e[2] for e in queue._queue] == ["b"]
+
+
+def _job_files(tmp_path, monkeypatch, job_id):
+    out, up = tmp_path / "output", tmp_path / "uploads"
+    (out / job_id).mkdir(parents=True)
+    up.mkdir(exist_ok=True)
+    (out / job_id / "partial.mp4").write_bytes(b"x")
+    (up / f"{job_id}_talk.mp4").write_bytes(b"x")
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", str(out))
+    monkeypatch.setattr(app_module, "UPLOAD_DIR", str(up))
+    return out, up
+
+
+def test_a_removed_queued_job_leaves_no_files(jobs, monkeypatch, tmp_path):
+    out, up = _job_files(tmp_path, monkeypatch, "a")
+    queue = asyncio.PriorityQueue()
+    monkeypatch.setattr(app_module, "job_queue", queue)
+
+    async def _no_webhook(jid):
+        return None
+    monkeypatch.setattr(app_module, "_notify_job_webhook", _no_webhook)
+    jobs["a"] = _job("queued")
+    queue.put_nowait((2, 1.0, "a"))
+    assert _post("a").json() == {"status": "removed"}
+    assert not (out / "a").exists() and not list(up.iterdir())
+
+
+def test_startup_clears_jobs_that_ended_without_clips(monkeypatch, tmp_path):
+    out, up = _job_files(tmp_path, monkeypatch, "failed")
+    (out / "done").mkdir()
+    (out / "done" / "x_metadata.json").write_text("{}")
+    (out / "resuming").mkdir()
+    (out / "resuming" / ".resume.json").write_text("{}")
+    (out / "thumbnails").mkdir()
+    (out / ".geoip").mkdir()
+    monkeypatch.setattr(app_module, "THUMBNAILS_DIR", str(out / "thumbnails"))
+    app_module._clear_unfinished_job_dirs()
+    assert sorted(p.name for p in out.iterdir()) == [".geoip", "done", "resuming", "thumbnails"]
+    assert not list(up.iterdir())
+
+
+def _delete(job_id):
+    async def _do():
+        transport = httpx.ASGITransport(app=app_module.app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.delete(f"/api/jobs/{job_id}")
+    return asyncio.run(_do())
+
+
+def test_deleting_a_finished_job_removes_it_and_its_files(jobs, monkeypatch, tmp_path):
+    out, up = _job_files(tmp_path, monkeypatch, "j")
+    jobs["j"] = _job("completed")
+    assert _delete("j").json() == {"status": "deleted"}
+    assert "j" not in jobs and not (out / "j").exists() and not list(up.iterdir())
+
+
+def test_a_running_job_must_be_stopped_before_deleting(jobs, monkeypatch, tmp_path):
+    out, _ = _job_files(tmp_path, monkeypatch, "j")
+    jobs["j"] = _job("processing")
+    assert _delete("j").status_code == 409
+    assert "j" in jobs and (out / "j").exists()
+    assert _delete("nope").status_code == 404

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Youtube, Instagram, Share2, ChevronDown, Check, LayoutDashboard, Settings, Plus, X, Terminal,
   Image, RotateCcw, Calendar, Loader2, Download, Clock, ScanFace, Captions, AudioLines, Scissors,
-  Sparkles, History, ListOrdered,
+  Sparkles, History, ListOrdered, Trash2,
 } from 'lucide-react';
 import MediaInput from './components/MediaInput';
 import JobList from './components/JobList';
@@ -10,7 +10,7 @@ import QueuePage from './components/QueuePage';
 import LogPanel from './components/LogPanel';
 import UsageCard from './components/UsageCard';
 import { ModelPicker, UsageSummary } from './components/ModelSettings';
-import { useJobs, isActive } from './lib/jobs';
+import { useJobs, isActive, deleteJob } from './lib/jobs';
 import McpConnectCard from './components/McpConnectCard';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
@@ -945,6 +945,12 @@ function App() {
                         className="btn-ghost text-xs py-1 px-2.5 flex items-center gap-1 disabled:opacity-50"
                       >
                         <X size={12} /> {stopping ? 'stopping…' : 'stop'}
+                      </button>
+                    )}
+                    {status !== 'processing' && jobId && allJobs && (
+                      <button type="button" className="btn-ghost text-xs py-1 px-2.5 flex items-center gap-1 hover:!border-danger"
+                        onClick={async () => { if (await deleteJob({ job_id: jobId })) { handleReset(); refreshJobs(); } }}>
+                        <Trash2 size={12} /> delete
                       </button>
                     )}
                     <span className={status === 'processing' ? 'badge-brass' : status === 'complete' ? 'badge-ok' : 'badge-danger'}>

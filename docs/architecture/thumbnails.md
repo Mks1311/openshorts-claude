@@ -10,7 +10,7 @@ title rather than repeating it. Rules baked in: payoff inside 50 characters
 (phones cut there), keyword in the first 3 words, same language as the
 transcript.
 
-Every Studio call is the Claude task `studio` (default `sonnet`, picked in
+Every Studio call is the Claude task `studio` (default `claude-sonnet-5-5`, picked in
 Settings → Models): a small model is fine for a closed-choice layout pick and
 visibly worse at creative titles. There is no image model.
 

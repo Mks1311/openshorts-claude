@@ -114,3 +114,16 @@ export const tokens = (n) => {
 };
 
 export const totalTokens = (u) => (u ? (u.input_tokens || 0) + (u.output_tokens || 0) : 0);
+
+// Delete a finished, failed or stopped job and its files, after asking.
+// Returns true when it is gone.
+export async function deleteJob(job) {
+  if (!window.confirm('Delete this job? Its clips and files on this machine are removed for good.')) return false;
+  try {
+    await apiJson(`/api/jobs/${job.job_id}`, { method: 'DELETE' });
+    return true;
+  } catch (e) {
+    window.alert(e.detail || 'Could not delete this job.');
+    return false;
+  }
+}

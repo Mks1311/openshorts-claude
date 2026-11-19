@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import {
-  Plus, Square, ArrowRight, ExternalLink, FileVideo, Loader2, CheckCircle2, AlertTriangle, Clock, ListOrdered,
+  Plus, Square, ArrowRight, Trash2, ExternalLink, FileVideo, Loader2, CheckCircle2, AlertTriangle, Clock, ListOrdered,
 } from 'lucide-react';
 import { apiJson } from '../lib/api';
 import {
-  isActive, jobTitle, jobLink, jobProgress, settingChips, youtubeId, when, span, tokens, totalTokens,
+  isActive, jobTitle, jobLink, jobProgress, settingChips, youtubeId, when, span, tokens, totalTokens, deleteJob,
 } from '../lib/jobs';
 
 // Re-render every few seconds so "running 12 min" and ETAs keep moving
@@ -140,19 +140,21 @@ function Waiting({ job, now, onOpen, onStop }) {
   );
 }
 
-function Finished({ job, onOpen }) {
+function Finished({ job, onOpen, onDelete }) {
   const ok = job.status === 'completed';
   const took = job.started_at && job.finished_at ? span(job.finished_at - job.started_at) : '';
   return (
-    <li>
-      <button onClick={() => onOpen(job)} className="w-full flex gap-3 sm:gap-4 p-3 sm:p-4 text-left hover:bg-paper2 transition-colors">
+    <li className="flex items-stretch hover:bg-paper2 transition-colors">
+      <button onClick={() => onOpen(job)} className="min-w-0 flex-1 flex gap-3 sm:gap-4 p-3 sm:p-4 text-left">
         <Thumb job={job} />
         <span className="min-w-0 flex-1">
           <span className="flex items-start justify-between gap-3">
             <Source job={job} />
             {ok
               ? <span className="badge-ok shrink-0"><CheckCircle2 size={11} /> {job.clips} clip{job.clips === 1 ? '' : 's'}</span>
-              : <span className="badge-danger shrink-0"><AlertTriangle size={11} /> failed</span>}
+              : job.stopped
+                ? <span className="badge-warn shrink-0"><Square size={10} /> stopped</span>
+                : <span className="badge-danger shrink-0"><AlertTriangle size={11} /> failed</span>}
           </span>
           <Chips job={job} />
           {!ok && job.error && <span className="block mt-2 text-xs text-danger line-clamp-2 break-words">{job.error}</span>}
@@ -163,6 +165,10 @@ function Finished({ job, onOpen }) {
           </span>
         </span>
         <ArrowRight size={15} className="text-muted shrink-0 self-center" />
+      </button>
+      <button onClick={() => onDelete(job)} aria-label={`delete ${jobTitle(job)}`} title="delete job and its files"
+        className="shrink-0 px-3 sm:px-4 text-muted hover:text-danger transition-colors border-l border-rule">
+        <Trash2 size={15} />
       </button>
     </li>
   );
@@ -229,7 +235,8 @@ export default function QueuePage({ jobs, onOpen, onNew, refresh }) {
           <section aria-label="finished">
             <p className="eyebrow mb-3">finished</p>
             <ul className="card divide-y divide-rule overflow-hidden">
-              {done.map((j) => <Finished key={j.job_id} job={j} onOpen={onOpen} />)}
+              {done.map((j) => <Finished key={j.job_id} job={j} onOpen={onOpen}
+                onDelete={async (job) => { if (await deleteJob(job)) refresh(); }} />)}
             </ul>
           </section>
         )}

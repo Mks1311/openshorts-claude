@@ -17,6 +17,22 @@ job still waiting in line is taken off the queue at once (`_take_off_queue`),
 ends failed with "Stopped before it finished." and loses its resume manifest,
 instead of waiting for a slot that may be hours away.
 
+Self-host keeps no files of a job that ended without clips:
+
+- a stopped job's folder in `output/` and its uploaded source are deleted
+  (`_discard_job_files`) once main.py is gone: after its delivery, or at once
+  for a job taken off the queue. The record stays (`stopped: true` in
+  `/api/jobs`) until a restart or a delete;
+- at startup, `_clear_unfinished_job_dirs` deletes every job folder with
+  neither a `*_metadata.json` (clips) nor a resume manifest (resumed, so kept),
+  with its upload: what failed or stopped jobs left behind. Nothing runs yet,
+  so nothing it deletes can be in use.
+
+`DELETE /api/jobs/{id}` (self-host only) removes a finished, failed or stopped
+job from the list and deletes its folder and upload; a queued or running job
+answers 409 until it is stopped. The download cache (`source_cache.py`) is
+shared by video id and stays.
+
 The real limit on a GPU host is VRAM, not CPU: each `main.py` job holds Parakeet
 (onnxruntime CUDA), TransNetV2 (torch, ~2 GB at peak) and an NVENC session. When
 the card is full a cut fails as "Generic error in an external library" / exit

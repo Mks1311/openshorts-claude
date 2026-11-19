@@ -27,20 +27,18 @@ from typing import Optional, Sequence, Tuple, Type, Union
 
 from pydantic import BaseModel
 
-DEFAULT_MODEL = "sonnet"
-# Frame questions are closed choices or short rewrites: the small model keeps
-# them cheap on the subscription's usage limit.
-VISION_MODEL = "haiku"
+# Every task's model unless Settings picks another (LLM_MODEL for text tasks).
+DEFAULT_MODEL = "claude-sonnet-5-5"
 
 # Every kind of call: its label and help in Settings, and its default model.
 # Text tasks fall back to LLM_MODEL before the default, as they always did.
 TASKS = {
     "clips": ("Pick moments", "Reads the transcript and ranks the stretches worth a short.", DEFAULT_MODEL),
     "visual_clips": ("Pick moments (silent video)", "Watches frames when the video has no speech.", DEFAULT_MODEL),
-    "layout": ("Layout", "Chooses single, split or screen layouts from frames.", VISION_MODEL),
-    "hooks": ("Hooks", "Writes each clip's hook title from what it shows.", VISION_MODEL),
-    "subtitles": ("Burned-in subtitle check", "Looks for captions already in the video.", VISION_MODEL),
-    "edits": ("Auto edit", "Plans zooms, cuts and effects for a clip.", VISION_MODEL),
+    "layout": ("Layout", "Chooses single, split or screen layouts from frames.", DEFAULT_MODEL),
+    "hooks": ("Hooks", "Writes each clip's hook title from what it shows.", DEFAULT_MODEL),
+    "subtitles": ("Burned-in subtitle check", "Looks for captions already in the video.", DEFAULT_MODEL),
+    "edits": ("Auto edit", "Plans zooms, cuts and effects for a clip.", DEFAULT_MODEL),
     "studio": ("YouTube Studio", "Titles, thumbnail text and descriptions.", DEFAULT_MODEL),
     "pro_mode": ("Pro mode", "Titles for the talking-head re-edit.", DEFAULT_MODEL),
 }

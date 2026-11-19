@@ -24,7 +24,9 @@ leaves your box: Claude only sees the transcript and still frames.
   ones in order with their ETA, and the finished ones with their clips, how
   long they took, or why they failed. Each job shows its link, thumbnail, clip
   range and the options it was started with. Stop a running job or remove a
-  waiting one at any time.
+  waiting one at any time; **delete** a finished one to drop it and its files.
+  A stopped job's files are deleted right away, and whatever failed jobs left
+  is cleared when the server starts.
 - **Edit** — per clip: trim, re-frame, re-caption (styles, position), change
   the hook, auto edit (zooms and cuts planned by Claude), pro mode for
   talking heads, dub into another language (ElevenLabs).
@@ -87,7 +89,7 @@ start of its run when the server is back. Finished jobs are kept 24 hours
 
 | Section | What it does |
 |---|---|
-| **Models** | The Claude model for each step: pick moments, pick moments in silent videos, layout, hooks, burned-in subtitle check, auto edit, YouTube Studio, pro mode. `haiku` is fastest and lightest on your plan's usage limit, `opus` the strongest. A change applies from the next call, running jobs included. Saved in `output/.models.json`. |
+| **Models** | The Claude model for each step: pick moments, pick moments in silent videos, layout, hooks, burned-in subtitle check, auto edit, YouTube Studio, pro mode. Every step defaults to `claude-sonnet-5-5`; `haiku` is fastest and lightest on your plan's usage limit, `opus` the strongest. A change applies from the next call, running jobs included. Saved in `output/.models.json`. |
 | **Usage** | Tokens and calls of the last day, 7 or 30 days, per step and per day (`output/.usage.jsonl`). Each job's own breakdown is in its view and on the Queue page. |
 | **Publishing** | Your Upload-Post key and the profile to post as. |
 | **Dubbing** | Your ElevenLabs key for the **dub voice** button on a clip. |
@@ -155,7 +157,7 @@ when the card has the VRAM for it (about 4–6 GB per job while it transcribes).
 |---|---|---|
 | `MAX_CONCURRENT_JOBS` | `1` | Jobs that run at the same time; the rest wait in the queue. |
 | `JOB_RETENTION_SECONDS` | `86400` | How long finished jobs and their clips are kept. |
-| `LLM_MODEL` | `sonnet` | Default model for the text steps when Settings picks none. |
+| `LLM_MODEL` | — | Model for the text steps when Settings picks none (else `claude-sonnet-5-5`). |
 | `LLM_TIMEOUT` | `600` | Seconds one Claude call may take. |
 | `LLM_SCORE_BATCH` | `8` | Transcript windows per scoring call. |
 | `CLAUDE_BIN` | `claude` | Path to the Claude CLI. |

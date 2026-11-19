@@ -36,7 +36,7 @@ def _cli(monkeypatch, payload, returncode=0, stderr=""):
 
 
 def test_describes_claude_and_its_model(claude):
-    assert llm_backend.describe() == {"provider": "claude", "model": "sonnet", "baseUrl": ""}
+    assert llm_backend.describe() == {"provider": "claude", "model": "claude-sonnet-5-5", "baseUrl": ""}
 
 
 def test_stage_retries_a_transient_error(claude, monkeypatch):
@@ -66,7 +66,7 @@ def test_claude_call_is_isolated_schema_bound_and_validated(claude, monkeypatch)
     cmd = seen["cmd"]
     message = json.loads(seen["input"])  # prompt over stdin as one stream-json turn, not argv
     assert message["message"]["content"] == [{"type": "text", "text": "score these"}]
-    assert cmd[cmd.index("--model") + 1] == "sonnet"
+    assert cmd[cmd.index("--model") + 1] == "claude-sonnet-5-5"
     assert json.loads(cmd[cmd.index("--json-schema") + 1]) == \
         llm_prompts.ScoreResponse.model_json_schema()
     assert cmd[cmd.index("--tools") + 1] == ""
@@ -74,7 +74,7 @@ def test_claude_call_is_isolated_schema_bound_and_validated(claude, monkeypatch)
     assert seen["cwd"] != os.getcwd()  # a scratch dir: this repo's CLAUDE.md stays out
     assert parsed["windows"] == windows
     assert cost["input_tokens"] == 1510 and cost["output_tokens"] == 40
-    assert cost["total_cost"] == 0.0 and cost["model"] == "sonnet"
+    assert cost["total_cost"] == 0.0 and cost["model"] == "claude-sonnet-5-5"
 
 
 def test_claude_api_error_carries_its_status_for_the_retry_policy(claude, monkeypatch):
@@ -121,7 +121,7 @@ def test_frames_go_as_jpeg_blocks_in_order_on_the_vision_model(claude, monkeypat
     assert blocks[1]["source"] == {"type": "base64", "media_type": "image/jpeg",
                                    "data": base64.b64encode(b"\xff\xd8jpg").decode()}
     cmd = seen["cmd"]
-    assert cmd[cmd.index("--model") + 1] == claude_cli.VISION_MODEL
+    assert cmd[cmd.index("--model") + 1] == claude_cli.DEFAULT_MODEL
     assert answer["layout"] == "split"
 
 
@@ -161,12 +161,12 @@ def test_thumbnail_text_goes_to_claude_without_a_schema(claude, monkeypatch):
 
 def test_a_task_runs_on_the_model_picked_in_settings(monkeypatch):
     monkeypatch.delenv("LLM_MODEL", raising=False)
-    assert claude_cli.model_for("layout") == "haiku"
-    assert claude_cli.model_for("clips") == "sonnet"
+    assert claude_cli.model_for("layout") == "claude-sonnet-5-5"
+    assert claude_cli.model_for("clips") == "claude-sonnet-5-5"
     with open(claude_cli.SETTINGS_FILE, "w") as f:
         json.dump({"layout": "opus", "clips": "bad name; rm", "nope": "haiku"}, f)
     assert claude_cli.model_for("layout") == "opus"
-    assert claude_cli.model_for("clips") == "sonnet"  # an invalid pick is ignored
+    assert claude_cli.model_for("clips") == "claude-sonnet-5-5"  # an invalid pick is ignored
     monkeypatch.setenv("LLM_MODEL", "haiku")
     assert claude_cli.model_for("clips") == "haiku"  # LLM_MODEL still steers text tasks
 
