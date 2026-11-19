@@ -1,8 +1,9 @@
-"""The dashboard's job list (self-host): GET /api/jobs.
+"""The dashboard's queue page (self-host): GET /api/jobs.
 
-What must hold: every held job is listed newest first with its status, label
-and clip count, a queued job carries its place in line, and the cloud does not
-expose the endpoint (it lists every user's jobs).
+What must hold: every held job is listed newest first with what was asked
+(source, range, settings) and where it stands (place in line, log while it
+runs, why it failed), the settings and label survive a resume, and the cloud
+does not expose the endpoint (it would list every user's jobs).
 """
 import asyncio
 
@@ -18,7 +19,8 @@ def jobs(monkeypatch):
     monkeypatch.setattr(app_module, "jobs", table)
     monkeypatch.setattr(app_module, "BILLING_ENABLED", False)
     monkeypatch.setattr(app_module, "queue_snapshot",
-                        lambda jid: {"position": 2} if table[jid]["status"] == "queued" else None)
+                        lambda jid: {"position": 2, "eta_seconds": 600}
+                        if table[jid]["status"] == "queued" else None)
     return table
 
 
@@ -30,19 +32,51 @@ def _get():
     return asyncio.run(_do())
 
 
-def test_lists_jobs_newest_first(jobs):
+def _log(*lines):
+    return app_module._TimedLog(list(lines))
+
+
+def test_lists_jobs_newest_first_with_their_details(jobs):
+    settings = {"format": "vertical", "clips": 5, "min_seconds": None, "max_seconds": None,
+                "layouts": [], "hook": "pill", "captions": True}
     jobs["old"] = {"status": "completed", "submitted_at": 1.0, "label": "a.mp4",
-                   "result": {"clips": [{}, {}]}}
-    jobs["new"] = {"status": "queued", "submitted_at": 2.0, "label": "https://youtu.be/x"}
+                   "result": {"clips": [{}, {}]}, "logs": _log("done"), "output_dir": "/nowhere"}
+    jobs["new"] = {"status": "queued", "submitted_at": 2.0, "label": "https://youtu.be/x",
+                   "settings": settings, "logs": _log("queued"),
+                   "partial": {"start_seconds": 60, "end_seconds": 3600}}
     resp = _get()
     assert resp.status_code == 200
     listed = resp.json()["jobs"]
     assert [j["job_id"] for j in listed] == ["new", "old"]
-    assert listed[0] == {"job_id": "new", "status": "queued", "label": "https://youtu.be/x",
-                         "submitted_at": 2.0, "clips": 0, "position": 2}
-    assert listed[1]["clips"] == 2 and listed[1]["position"] is None
+    new, old = listed
+    assert new["position"] == 2 and new["eta_seconds"] == 600
+    assert new["settings"] == settings
+    assert new["range"] == {"start": 60, "end": 3600}
+    assert new["logs"] is None and new["finished_at"] is None
+    assert old["clips"] == 2 and old["position"] is None and old["range"] is None
+    assert old["finished_at"] is not None
+
+
+def test_running_job_carries_its_log(jobs):
+    jobs["j"] = {"status": "processing", "logs": _log("Transcribing video..."), "started_at": 5.0}
+    row = _get().json()["jobs"][0]
+    assert row["logs"] == ["Transcribing video..."] and row["started_at"] == 5.0
+
+
+def test_a_stopped_job_says_so(jobs):
+    jobs["j"] = {"status": "failed", "stop_requested": True, "logs": _log("Traceback: boom")}
+    assert _get().json()["jobs"][0]["error"] == "Stopped before it finished."
 
 
 def test_not_offered_with_billing(jobs, monkeypatch):
     monkeypatch.setattr(app_module, "BILLING_ENABLED", True)
     assert _get().status_code == 404
+
+
+def test_label_and_settings_travel_in_the_resume_manifest(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "OUTPUT_DIR", str(tmp_path))
+    (tmp_path / "j").mkdir()
+    app_module._write_resume_manifest("j", ["main.py"], 2, None, None, False,
+                                      label="https://youtu.be/x", settings={"clips": 5})
+    m = app_module._read_manifest("j")
+    assert m["label"] == "https://youtu.be/x" and m["settings"] == {"clips": 5}

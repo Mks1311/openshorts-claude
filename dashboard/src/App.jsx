@@ -2,10 +2,12 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Youtube, Instagram, Share2, ChevronDown, Check, LayoutDashboard, Settings, Plus, X, Terminal,
   Image, RotateCcw, Calendar, Loader2, Download, Clock, ScanFace, Captions, AudioLines, Scissors,
-  Sparkles, History,
+  Sparkles, History, ListOrdered,
 } from 'lucide-react';
 import MediaInput from './components/MediaInput';
 import JobList from './components/JobList';
+import QueuePage from './components/QueuePage';
+import { useJobs, isActive } from './lib/jobs';
 import McpConnectCard from './components/McpConnectCard';
 import ResultCard from './components/ResultCard';
 import ProcessingAnimation from './components/ProcessingAnimation';
@@ -205,8 +207,12 @@ function App() {
   const [profilesState, setProfilesState] = useState('idle'); // idle | loading | ok | none | error
 
   const [jobId, setJobId] = useState(null);
-  // A job is queued or running: a new submission joins the queue.
-  const [queueBusy, setQueueBusy] = useState(false);
+  // Every job on the server; while one is queued or running, a new
+  // submission joins the queue.
+  const { jobs: allJobs, refresh: refreshJobs } = useJobs();
+  const activeJobs = (allJobs || []).filter(isActive);
+  const queueBusy = activeJobs.length > 0;
+  const [queuedNotice, setQueuedNotice] = useState(false);
   const [status, setStatus] = useState('idle'); // idle, processing, complete, error
   const [stopping, setStopping] = useState(false);
   useEffect(() => { if (status !== 'processing') setStopping(false); }, [status]);
@@ -455,6 +461,7 @@ function App() {
 
           if (data.status === 'completed') {
             setQueueInfo(null);
+            if (data.logs) { setLogs(data.logs); setLogTimes(data.log_times || []); }
             setStatus('complete');
             clearInterval(interval);
           } else if (data.status === 'failed') {
@@ -556,6 +563,9 @@ function App() {
       // Behind another job: back to the form, where the list shows it in line.
       if (queueing) {
         handleReset();
+        refreshJobs();
+        setQueuedNotice(true);
+        setTimeout(() => setQueuedNotice(false), 8000);
         return;
       }
       setJobId(resData.job_id);
@@ -589,6 +599,7 @@ function App() {
   // Open a job from the list: the poll above fills in its state.
   const openJob = (job) => {
     handleReset();
+    setActiveTab('dashboard');
     setJobId(job.job_id);
     setProcessingMedia({ type: 'server', payload: `/api/source/${job.job_id}` });
     setLogs(['Loading job...']);
@@ -604,6 +615,11 @@ function App() {
 
   const navItems = [
     { id: 'dashboard', icon: LayoutDashboard, label: 'Clips', hint: 'long video → shorts' },
+    ...(allJobs ? [{
+      id: 'queue', icon: ListOrdered, label: 'Queue',
+      hint: queueBusy ? `${activeJobs.filter((j) => j.status === 'processing').length} running · ${activeJobs.filter((j) => j.status === 'queued').length} waiting` : 'nothing running',
+      badge: activeJobs.length || null,
+    }] : []),
     { id: 'thumbnails', icon: Image, label: 'YouTube Studio', hint: 'titles · thumbnails' },
     { id: 'settings', icon: Settings, label: 'Settings', hint: 'posting · dubbing · agents' },
   ];
@@ -649,10 +665,15 @@ function App() {
             >
               {isActive && <span className="absolute left-0 top-2 bottom-2 w-0.5 bg-brass rounded-full" aria-hidden="true" />}
               <NavIcon size={18} className={`shrink-0 mx-auto lg:mx-0 ${isActive ? 'text-brass' : ''}`} />
-              <span className="hidden lg:block min-w-0 text-left">
+              <span className="hidden lg:block min-w-0 text-left flex-1">
                 <span className="block text-sm lowercase truncate">{item.label}</span>
                 <span className="block text-[11px] text-muted truncate">{item.hint}</span>
               </span>
+              {item.badge && (
+                <span className="absolute top-1.5 right-2 lg:static min-w-[18px] h-[18px] px-1 rounded-full bg-brass text-[10px] font-mono text-paper flex items-center justify-center">
+                  {item.badge}
+                </span>
+              )}
             </button>
           );
         })}
@@ -719,6 +740,11 @@ function App() {
                 <Plus size={14} /> <span className="hidden sm:inline">new video</span>
               </button>
             )}
+            {activeTab === 'dashboard' && status !== 'idle' && allJobs && (
+              <button onClick={() => setActiveTab('queue')} className="btn-ghost px-3.5 py-1.5 text-xs shrink-0" aria-label="queue">
+                <ListOrdered size={14} /> <span className="hidden sm:inline">queue{queueBusy ? ` · ${activeJobs.length}` : ''}</span>
+              </button>
+            )}
           </div>
           <div className="flex items-center gap-3 shrink-0">
             <span className="md:hidden"><ClaudeStatus compact /></span>
@@ -729,6 +755,11 @@ function App() {
         {sessionRecovered && (
           <Banner icon={RotateCcw} title="Back where you left off" text="Your last video and its clips are open again." onClose={() => setSessionRecovered(false)} />
         )}
+        {queuedNotice && (
+          <Banner role="status" icon={ListOrdered} title="Added to the queue"
+            text="It starts on its own when the videos ahead of it finish. Add another, or follow it on the queue page."
+            onClose={() => setQueuedNotice(false)} />
+        )}
         {jobGone && (
           <Banner role="status" icon={History} title="That video is no longer on the server"
             text="Finished jobs are cleared after the retention window. Start a new one to keep going." onClose={() => setJobGone(false)} />
@@ -737,6 +768,11 @@ function App() {
         <div className="flex-1 overflow-hidden relative">
 
           {/* Settings */}
+          {activeTab === 'queue' && (
+            <QueuePage jobs={allJobs} onOpen={openJob} refresh={refreshJobs}
+              onNew={() => { handleReset(); setActiveTab('dashboard'); }} />
+          )}
+
           {activeTab === 'settings' && (
             <div className="h-full overflow-y-auto custom-scrollbar animate-fade">
               <div className="max-w-2xl mx-auto px-4 py-6 sm:p-8">
@@ -836,8 +872,7 @@ function App() {
                     </div>
                     <MediaInput onProcess={handleProcess} isProcessing={status === 'processing'}
                       submitLabel={queueBusy ? 'add to queue' : 'generate clips'} />
-                    <JobList onOpen={openJob}
-                      onJobs={(list) => setQueueBusy(list.some((j) => j.status === 'queued' || j.status === 'processing'))} />
+                    <JobList jobs={allJobs} onOpen={openJob} onViewAll={() => setActiveTab('queue')} />
                   </div>
 
                   <aside className="lg:pt-[8.5rem]" aria-label="what happens">

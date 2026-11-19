@@ -1,71 +1,57 @@
-import React, { useEffect, useState } from 'react';
-import { ChevronRight } from 'lucide-react';
-import { apiJson } from '../lib/api';
+import React from 'react';
+import { ChevronRight, ArrowRight } from 'lucide-react';
+import { isActive, jobTitle, jobProgress, settingChips, when, span } from '../lib/jobs';
 
 const BADGE = {
-  queued: ['badge-warn', 'queued'],
-  processing: ['badge-brass', 'working'],
-  completed: ['badge-ok', 'done'],
-  failed: ['badge-danger', 'failed'],
+  queued: 'badge-warn',
+  processing: 'badge-brass',
+  completed: 'badge-ok',
+  failed: 'badge-danger',
 };
 
-const when = (epoch) => {
-  if (!epoch) return '';
-  const d = new Date(epoch * 1000);
-  return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-};
+function statusText(job) {
+  if (job.status === 'queued') return job.position ? `queued #${job.position}` : 'queued';
+  if (job.status === 'processing') return jobProgress(job).stage || 'working';
+  if (job.status === 'completed') return `${job.clips} clip${job.clips === 1 ? '' : 's'}`;
+  return 'failed';
+}
 
-// Every job the server holds, so queued, running and finished ones stay
-// reachable after "new video". Renders nothing where /api/jobs is not served
-// (the cloud). `onJobs` gets each fresh list.
-export default function JobList({ onOpen, onJobs }) {
-  const [jobs, setJobs] = useState(null);
-
-  useEffect(() => {
-    let alive = true;
-    const load = () => apiJson('/api/jobs')
-      .then((d) => { if (alive) { setJobs(d.jobs || []); onJobs?.(d.jobs || []); } })
-      .catch(() => { /* not offered here, or the server is restarting */ });
-    load();
-    const t = setInterval(load, 5000);
-    return () => { alive = false; clearInterval(t); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  if (!jobs) return null;
+// The queue at a glance under the new-video form: what runs and waits, then
+// the latest finished ones; the queue page has the rest.
+export default function JobList({ jobs, onOpen, onViewAll }) {
+  if (!jobs || !jobs.length) return null;
+  // Run order: the running job, then the queue by position.
+  const active = jobs.filter(isActive).sort((a, b) =>
+    (a.status === 'processing' ? -1 : a.position ?? 1e9) - (b.status === 'processing' ? -1 : b.position ?? 1e9));
+  const shown = [...active, ...jobs.filter((j) => !isActive(j)).slice(0, Math.max(0, 4 - active.length))];
 
   return (
     <section className="mt-10" aria-label="your jobs">
-      <p className="eyebrow mb-3">your jobs</p>
-      {!jobs.length && (
-        <p className="card px-4 py-4 text-sm text-muted leading-relaxed">
-          No jobs yet. Jobs wait here in a queue and run one after another, so you can
-          line up several videos and come back to the clips later.
-        </p>
-      )}
-      {jobs.length > 0 && <ul className="card divide-y divide-rule overflow-hidden">
-        {jobs.map((job) => {
-          const [badge, label] = BADGE[job.status] || ['badge-warn', job.status];
-          return (
-            <li key={job.job_id}>
-              <button onClick={() => onOpen(job)}
-                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-paper2 transition-colors">
-                <span className="min-w-0 flex-1">
-                  <span className="block text-sm text-ink truncate">{job.label || `job ${job.job_id.slice(0, 8)}`}</span>
-                  <span className="block readout mt-0.5">
-                    {when(job.submitted_at)}
-                    {job.status === 'completed' && ` · ${job.clips} clip${job.clips === 1 ? '' : 's'}`}
-                  </span>
+      <div className="flex items-center justify-between mb-3">
+        <p className="eyebrow">your queue</p>
+        <button onClick={onViewAll} className="text-xs text-muted hover:text-brass inline-flex items-center gap-1">
+          open queue{jobs.length > shown.length ? ` · ${jobs.length}` : ''} <ArrowRight size={12} />
+        </button>
+      </div>
+      <ul className="card divide-y divide-rule overflow-hidden">
+        {shown.map((job) => (
+          <li key={job.job_id}>
+            <button onClick={() => onOpen(job)}
+              className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-paper2 transition-colors">
+              <span className="min-w-0 flex-1">
+                <span className="block text-sm text-ink truncate">{jobTitle(job)}</span>
+                <span className="block readout mt-0.5 truncate">
+                  {settingChips(job).slice(0, 3).join(' · ')}
+                  {job.status === 'queued' && job.eta_seconds != null && ` · starts in ~${span(job.eta_seconds)}`}
+                  {!isActive(job) && ` · ${when(job.finished_at || job.submitted_at)}`}
                 </span>
-                <span className={`${badge} shrink-0`}>
-                  {label}{job.status === 'queued' && job.position ? ` #${job.position}` : ''}
-                </span>
-                <ChevronRight size={15} className="text-muted shrink-0" />
-              </button>
-            </li>
-          );
-        })}
-      </ul>}
+              </span>
+              <span className={`${BADGE[job.status] || 'badge-warn'} shrink-0`}>{statusText(job)}</span>
+              <ChevronRight size={15} className="text-muted shrink-0" />
+            </button>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

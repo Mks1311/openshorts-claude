@@ -1921,7 +1921,6 @@ def _recover_jobs_from_disk():
                 'output_dir': job_path,
                 'user_id': owner,
                 'result': {'clips': clips, 'cost_analysis': data.get('cost_analysis')},
-                'label': data.get('source_video'),
             }
             recovered += 1
         except Exception as e:
@@ -2252,7 +2251,8 @@ def _install_drain_signal_handler():
 def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, watermark,
                            webhook_url=None, webhook_secret=None, base_url=None,
                            partial=None, source_cap_minutes=None, skip_statics=False,
-                           via_api_key=False, lane=None, submitted_at=None, topup=False):
+                           via_api_key=False, lane=None, submitted_at=None, topup=False,
+                           label=None, settings=None):
     try:
         path = os.path.join(OUTPUT_DIR, job_id, _RESUME_FILE)
         # Atomic like every manifest write: the other instance reads them.
@@ -2282,6 +2282,8 @@ def _write_resume_manifest(job_id, cmd, priority, user_id, reservation_id, water
                 "lane": lane or _queue_mode.NORMAL,
                 "submitted_at": submitted_at,
                 "topup": bool(topup),
+                "label": label,
+                "settings": settings,
         })
     except Exception as e:
         print(f"⚠️ Could not write resume manifest for {job_id}: {e}")
@@ -2448,6 +2450,8 @@ def _register_resumed(picked) -> int:
             'base_url': m.get("base_url"),
             'via_api_key': bool(m.get("via_api_key")),
             'topup': bool(m.get("topup")),
+            'label': m.get("label") if isinstance(m.get("label"), str) else None,
+            'settings': m.get("settings") if isinstance(m.get("settings"), dict) else None,
             # It ran before (drain-cut, or an instance that died): its expiry
             # clock and its newest-first place count from that run.
             'last_run': float(m.get("run_started") or m.get("heartbeat") or 0) or None,
@@ -4931,6 +4935,7 @@ async def run_job(job_id, job_data):
         jobs[job_id]['status'] = 'failed'
         return
     jobs[job_id]['status'] = 'processing'
+    jobs[job_id]['started_at'] = time.time()
     jobs[job_id]['logs'].append("Job started by worker.")
     print(f"🎬 [run_job] Executing command for {job_id}: {' '.join(cmd)}")
 
@@ -5691,6 +5696,17 @@ async def process_endpoint(
     # caller connected to.
     api_base = os.environ.get("PUBLIC_API_URL", "").rstrip("/") or str(request.base_url).rstrip("/")
 
+    # What the user asked for, shown on the job list. Every value is already
+    # validated above: numbers, a closed format and the known layout names.
+    settings = {
+        "format": output_format,
+        "clips": n_clips, "min_seconds": min_secs, "max_seconds": max_secs,
+        "layouts": sorted({str(n).strip().lower() for n in layouts}
+                          & (set(LAYOUT_ENV) | {"auto", "none"})),
+        "hook": env.get("AUTO_HOOK_STYLE", "classic") if env.get("AUTO_HOOK") == "1" else None,
+        "captions": env.get("AUTO_CAPTIONS") != "0",
+    }
+
     # Enqueue Job
     _end_submission(job_id)  # from here the job counts in `jobs` itself
     jobs[job_id] = {
@@ -5702,6 +5718,7 @@ async def process_endpoint(
         'attestation': attestation,
         # What the job list shows: the link, or the uploaded file's name.
         'label': url or (file.filename if file else None),
+        'settings': settings,
         'user_id': user_id,
         'reservation_id': reservation_id,
         'watermark': env.get("WATERMARK") == "1",
@@ -5742,7 +5759,8 @@ async def process_endpoint(
                            source_cap_minutes=source_cap, skip_statics=skip_statics,
                            via_api_key=jobs[job_id]['via_api_key'],
                            lane=jobs[job_id]['lane'], submitted_at=jobs[job_id]['submitted_at'],
-                           topup=jobs[job_id]['topup'])
+                           topup=jobs[job_id]['topup'], label=jobs[job_id]['label'],
+                           settings=settings)
 
     _enqueue_job(job_id, priority)
     if _saturation_on():
@@ -5851,32 +5869,74 @@ async def get_status(job_id: str, request: Request):
     }
 
 
+def _job_title(job):
+    """The source file name main.py recorded once the job finished, or None.
+    Read once and kept on the record."""
+    if 'title' not in job:
+        job['title'] = None
+        try:
+            meta = glob.glob(os.path.join(job['output_dir'], "*_metadata.json"))
+            if meta:
+                with open(meta[0]) as f:
+                    name = json.load(f).get('source_video')
+                if isinstance(name, str):
+                    job['title'] = os.path.basename(name)
+        except (OSError, KeyError, ValueError):
+            pass
+    return job['title']
+
+
+def _job_summary(job_id, job):
+    """One row of GET /api/jobs: what was asked, where it stands, how it went."""
+    status = _presented_status(job_id, job)
+    clips = (job.get('result') or {}).get('clips') or []
+    queue = queue_snapshot(job_id)
+    try:
+        at = float(job.get('submitted_at') or os.path.getmtime(job['output_dir']))
+    except (OSError, KeyError, TypeError, ValueError):
+        at = None
+    lines, times = _visible_logs_timed(job.get('logs') or [])
+    partial = job.get('partial') or {}
+    row = {
+        "job_id": job_id,
+        "status": status,
+        "label": job.get('label'),
+        "title": _job_title(job) if status == 'completed' else None,
+        "settings": job.get('settings'),
+        "range": ({"start": partial.get('start_seconds'), "end": partial.get('end_seconds')}
+                  if partial.get('end_seconds') is not None else None),
+        "submitted_at": at,
+        "started_at": job.get('started_at'),
+        "finished_at": times[-1] if times and status in ('completed', 'failed') else None,
+        "clips": len(clips),
+        "position": queue["position"] if queue else None,
+        "eta_seconds": queue["eta_seconds"] if queue else None,
+        "stopping": bool(job.get('stop_requested')) and status in ('queued', 'processing'),
+        "error": None,
+        # The running job's log: the dashboard reads its stage and clip count.
+        "logs": lines[-400:] if status == 'processing' else None,
+    }
+    if status == 'failed' and job.get('stop_requested'):
+        row["error"] = "Stopped before it finished."
+    elif status == 'failed':
+        try:
+            row["error"] = (_job_error_text(lines) or (lines[-1] if lines else ''))[-300:]
+        except Exception:
+            row["error"] = None
+    return row
+
+
 @app.get("/api/jobs")
 async def list_jobs():
-    """Every job this server holds, newest first: the dashboard's job list, so
-    queued, running and finished jobs stay reachable after "new video".
+    """Every job this server holds, newest first: the dashboard's queue page,
+    so queued, running and finished jobs stay reachable after "new video".
 
     shortcut: self-host only, where every job is the one operator's. The cloud
     would need an owner filter (and BYOK jobs have no owner) before opening it.
     """
     if BILLING_ENABLED:
         raise HTTPException(status_code=404, detail="Not found")
-    out = []
-    for job_id, job in list(jobs.items()):
-        clips = (job.get('result') or {}).get('clips') or []
-        queue = queue_snapshot(job_id)
-        try:
-            at = float(job.get('submitted_at') or os.path.getmtime(job['output_dir']))
-        except (OSError, KeyError, TypeError, ValueError):
-            at = None
-        out.append({
-            "job_id": job_id,
-            "status": _presented_status(job_id, job),
-            "label": job.get('label'),
-            "submitted_at": at,
-            "clips": len(clips),
-            "position": queue["position"] if queue else None,
-        })
+    out = [_job_summary(job_id, job) for job_id, job in list(jobs.items())]
     out.sort(key=lambda j: j["submitted_at"] or 0, reverse=True)
     return {"jobs": out}
 
