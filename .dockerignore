@@ -17,8 +17,6 @@ ENV/
 
 # Node
 node_modules/
-remotion/node_modules/
-render-service/node_modules/
 dashboard/node_modules/
 
 # IDE
@@ -58,13 +56,6 @@ docker-compose.yml
 # Docs
 README.md
 *.md
-
-
-
-
-
-
-
 
 # Rust build output
 osrender/target/

@@ -13,7 +13,6 @@ same directory are still public to whoever has the job id.
 import pytest
 
 media_auth = pytest.importorskip("media_auth")
-restoring_static = pytest.importorskip("restoring_static")
 
 
 class TestTheGuardIsWiredIn:
@@ -21,8 +20,6 @@ class TestTheGuardIsWiredIn:
         app = pytest.importorskip("app")
         mount = next(r for r in app.app.routes
                      if getattr(r, "name", None) == "videos")
-        # app._media_guard wraps the allowlist (and adds the free-plan rule
-        # that refuses a marked job's clean twins, tests/test_watermark_delivery).
         assert mount.app.guard is app._media_guard, \
             "/videos is serving the working directory with no allowlist"
         assert not app._media_guard("job/.resume.json")

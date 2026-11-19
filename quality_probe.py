@@ -85,7 +85,7 @@ def main() -> int:
             'retries': 2,
             'cachedir': False,
             # A watch?v=X&list=... link is the one video; without this
-            # yt-dlp walks the whole list (see cloud/metering.py).
+            # yt-dlp walks the whole list.
             'noplaylist': True,
         }
         # yt-dlp's default player clients (tv_downgraded/web_safari with

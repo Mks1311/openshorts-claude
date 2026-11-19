@@ -3,7 +3,6 @@ import os
 import tempfile
 import re
 import shutil
-import textwrap
 import subprocess
 import urllib.request
 import uuid

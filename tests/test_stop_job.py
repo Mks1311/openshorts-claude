@@ -19,7 +19,6 @@ psutil = pytest.importorskip("psutil")
 def jobs(monkeypatch):
     table = {}
     monkeypatch.setattr(app_module, "jobs", table)
-    monkeypatch.setattr(app_module, "BILLING_ENABLED", False)
     return table
 
 
@@ -51,13 +50,6 @@ def test_a_finished_job_cannot_be_stopped(jobs, status):
 
 def test_unknown_job_is_404(jobs):
     assert _post("nope").status_code == 404
-
-
-def test_not_offered_with_billing(jobs, monkeypatch):
-    monkeypatch.setattr(app_module, "BILLING_ENABLED", True)
-    jobs["j"] = _job("processing")
-    assert _post("j").status_code == 404
-    assert "stop_requested" not in jobs["j"]
 
 
 def test_a_stopped_job_is_not_retried(jobs, monkeypatch):
@@ -109,10 +101,6 @@ def test_a_queued_job_leaves_the_queue_at_once(jobs, monkeypatch):
     queue = asyncio.PriorityQueue()
     monkeypatch.setattr(app_module, "job_queue", queue)
     monkeypatch.setattr(app_module, "_clear_resume_manifest", lambda jid: None)
-
-    async def _no_webhook(jid):
-        return None
-    monkeypatch.setattr(app_module, "_notify_job_webhook", _no_webhook)
     jobs["a"] = _job("queued")
     jobs["b"] = _job("queued")
     queue.put_nowait((2, 1.0, "a"))
@@ -138,10 +126,6 @@ def test_a_removed_queued_job_leaves_no_files(jobs, monkeypatch, tmp_path):
     out, up = _job_files(tmp_path, monkeypatch, "a")
     queue = asyncio.PriorityQueue()
     monkeypatch.setattr(app_module, "job_queue", queue)
-
-    async def _no_webhook(jid):
-        return None
-    monkeypatch.setattr(app_module, "_notify_job_webhook", _no_webhook)
     jobs["a"] = _job("queued")
     queue.put_nowait((2, 1.0, "a"))
     assert _post("a").json() == {"status": "removed"}

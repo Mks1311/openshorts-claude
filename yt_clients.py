@@ -1,5 +1,5 @@
 """yt-dlp client selection for YouTube, shared by the download (``main.py``)
-and the duration probe (``cloud/metering.py``) so the two cannot drift.
+and the quality probe (``quality_probe.py``) so the two cannot drift.
 
 Why the client list is explicit. With account cookies yt-dlp's defaults are
 ``tv_downgraded`` + ``web``, and for a share of videos both come back

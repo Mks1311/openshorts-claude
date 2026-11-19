@@ -1,12 +1,10 @@
-# Download routing and paid proxy accounting (`cloud/proxy_ledger.py`)
+# Download routing
 
 ## Route order
 
 Downloads go **direct → static ISP proxies (`STATIC_PROXY_URLS`, flat rate) →
-per-GB proxy (`PROXY_URL`)**. The duration probe
-(`cloud/metering.probe_url_minutes`) follows the same order, with one extra free
-step before any per-GB attempt: the fallback clients through a static
-(`fallback-static`).
+per-GB proxy (`PROXY_URL`)**. The quality probe (`quality_probe.py`) follows
+the same order.
 
 ## yt-dlp clients
 
@@ -53,32 +51,16 @@ identically.
   **per video** (the same video fails on all of them whatever the client; only
   an authenticated session or a residential IP gets through). So when the probe
   saw every static bot-checked and the paid proxy answer, the job carries
-  `DOWNLOAD_SKIP_STATICS=1` (`metering.pop_statics_bot_checked`, also in the
-  resume manifest) and `plan_download_attempts` goes straight to the paid
+  `DOWNLOAD_SKIP_STATICS=1` (also in the resume manifest) and `plan_download_attempts` goes straight to the paid
   attempts instead of repeating anonymous hits for the same verdict.
-- `PAID_PROXY_DAILY_MB` (default 500) is the hard ceiling: past it the paid
-  proxy is dropped from the probe and from every new job's env until UTC
-  midnight (`reserve_process_minutes` sets `request.state.paid_allowed`;
-  `run_job` checks again when a queued job starts). Thumbnail Studio downloads
-  run in the API process and take `allow_paid` / `route_out` from
-  `download_youtube_video` instead of the env.
 - Do not keep `PROXY_URL` in a local `.env`: every local `main.py` run would then
   bill the per-GB proxy.
 
-## Ledger and alerts
+## Route report
 
-`main.py` prints `PROXY_ROUTE=<json>` after every download (winner, paid bytes
-across all attempts including failed paid ones, each free attempt's error);
-`app.py` persists it as a `proxy_usage` row at job end and alerts when the paid
-proxy carried bytes, folding a burst into one message per 5 min. The table, not
-the in-memory monthly counter or the rotating container log, is what answers
-"what did this day cost".
-
-The watcher probes the static pool against a real YouTube watch page (playable
-markers), not a generic connectivity endpoint: YouTube can refuse the static IPs
-while other hosts keep answering. When `YOUTUBE_COOKIES` is set it also checks
-the ytcfg `LOGGED_IN` marker and alerts on the first probe that says the session
-is gone (`cloud/alerts.py`).
+`main.py` prints `PROXY_BYTES=` and `PROXY_ROUTE=<json>` after every download
+(winner, paid bytes, each free attempt's error); `app.py` keeps both out of the
+job log.
 
 ## The account's request budget (`yt_account.py`)
 
@@ -119,8 +101,7 @@ outright.
   before it counts the answer against `YT_ACCOUNT_ANSWERS_PER_VIDEO`. An
   account with `YT_ACCOUNT_REST_STRIKES` (3) such answers in a row rests
   `YT_ACCOUNT_REST_SECONDS` (900) while the others carry the load; with every
-  account resting, the one closest to waking is used, never none. The session
-  watcher (`cloud/alerts.py`) only checks the first account.
+  account resting, the one closest to waking is used, never none.
 - **Age-restricted videos.** YouTube opens them only to an age-verified
   account ("Sorry, this content is age-restricted ... provide more info so we
   can be sure you're an adult"; anonymous: "Sign in to confirm your age").

@@ -10,7 +10,6 @@ from clip_selection import (
     score_batches,
     shortlist_target,
     snap_clip_to_words,
-    compact_words,
     trim_to_best,
     vision_segments,
 )
@@ -88,12 +87,6 @@ class TestSnapClipToWords:
         words = self._words()
         start, end = snap_clip_to_words(0.0, 59.9, words, 80.0)
         assert end - start <= 60.0
-
-
-class TestCompactWords:
-    def test_rounds_timestamps(self):
-        words = [{"w": " hi", "s": 17.240000000000002, "e": 17.899999999999999}]
-        assert compact_words(words) == [{"w": " hi", "s": 17.24, "e": 17.9}]
 
 
 class TestClipCountTargets:

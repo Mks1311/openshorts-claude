@@ -1,4 +1,4 @@
-"""POST /api/social/post when the job is dropped (cleanup, account delete)
+"""POST /api/social/post when the job is dropped (cleanup)
 while the Upload-Post key is being resolved: a 404, never a KeyError 500."""
 import asyncio
 
@@ -12,14 +12,10 @@ def test_job_dropped_during_key_resolution_is_a_404(monkeypatch):
     job_id = "job-gone-mid-request"
     app_module.jobs[job_id] = {"status": "completed", "result": {"clips": []}}
 
-    async def fake_ensure(jid, request):
-        return True
-
     async def fake_resolve(request, body_key=None):
         app_module.jobs.pop(job_id, None)  # cleanup runs during this await
         return "key", None
 
-    monkeypatch.setattr(app_module, "_ensure_job_files", fake_ensure)
     monkeypatch.setattr(app_module, "resolve_upload_post", fake_resolve)
 
     async def _post():
@@ -50,9 +46,6 @@ def test_a_clip_pointing_at_a_file_never_written_posts_the_one_it_has(tmp_path, 
     monkeypatch.setattr(app_module, "OUTPUT_DIR", str(tmp_path))
     sent = {}
 
-    async def fake_ensure(jid, request):
-        return True
-
     async def fake_resolve(request, body_key=None):
         return "key", None
 
@@ -67,7 +60,6 @@ def test_a_clip_pointing_at_a_file_never_written_posts_the_one_it_has(tmp_path, 
         sent.update(path=file_path, name=filename)
         return Accepted()
 
-    monkeypatch.setattr(app_module, "_ensure_job_files", fake_ensure)
     monkeypatch.setattr(app_module, "resolve_upload_post", fake_resolve)
     monkeypatch.setattr(app_module, "_post_video_blocking", fake_upload)
 

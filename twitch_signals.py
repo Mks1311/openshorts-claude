@@ -51,14 +51,6 @@ def parse_vod_id(url) -> Optional[str]:
     return m.group(1) if m else None
 
 
-def parse_helix_duration(value) -> float:
-    """Helix VOD durations look like ``3h2m1s``; seconds as a float."""
-    total = 0.0
-    for amount, unit in re.findall(r"(\d+(?:\.\d+)?)([hms])", str(value or "")):
-        total += float(amount) * {"h": 3600, "m": 60, "s": 1}[unit]
-    return total
-
-
 def shift_clips(clips: List[dict], start_seconds: float, duration: float) -> List[dict]:
     """Move VOD-time clips into the time of the file being clipped.
 
@@ -139,36 +131,6 @@ def promote_hot_windows(shortlist: List[dict], scored_order: List[dict],
         have.add(wid)
         promoted += 1
     return out
-
-
-def best_stretch(clips: List[dict], total_seconds: float, length_seconds: float,
-                 lead_seconds: float = 60.0):
-    """The ``length_seconds`` stretch of a VOD holding the most viewer-clip views.
-
-    For Autopilot, which clips at most N minutes of each stream: the first N
-    minutes of a stream are usually a "starting soon" screen and small talk,
-    and the moments viewers clipped are hours in. ``clips`` are VOD-time
-    ``{"start", "duration", "views"}`` (``fetch_viewer_clips``). Each candidate
-    stretch opens ``lead_seconds`` before a clip, so the first moment keeps its
-    setup. Returns ``(start, end)`` or None when there is no signal or the VOD
-    already fits.
-    """
-    total = float(total_seconds or 0)
-    length = float(length_seconds or 0)
-    if not clips or length <= 0 or (total and total <= length):
-        return None
-    best, best_views = None, -1
-    for anchor in clips:
-        start = max(0.0, float(anchor["start"]) - lead_seconds)
-        if total:
-            start = min(start, max(0.0, total - length))
-        end = start + length
-        views = sum(int(c.get("views") or 0) + 1 for c in clips   # +1: a clip counts
-                    if start <= float(c["start"]) and
-                    float(c["start"]) + float(c.get("duration") or 0) <= end)
-        if views > best_views:
-            best, best_views = (round(start, 3), round(end, 3)), views
-    return best
 
 
 # --------------------------------------------------------------------------- #

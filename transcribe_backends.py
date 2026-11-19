@@ -141,8 +141,7 @@ _NULL_GATE = _NullGate()
 class _TranscribeProgress:
     """Emits '🎙️ Transcribing… NN% (Xs)' lines at 25% steps.
 
-    These are the only transcription lines cloud users see (log_view keeps
-    them), so they must stay free of technical detail.
+    They show in the job log, so they must stay free of technical detail.
     """
 
     def __init__(self, total_seconds):

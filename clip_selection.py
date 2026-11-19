@@ -192,18 +192,6 @@ def clip_duration_bounds():
     return round(lo, 3), round(hi, 3)
 
 
-def compact_words(words, precision=2):
-    """Round word timestamps for prompts — full float precision wastes tokens."""
-    return [
-        {
-            "w": w.get("w", ""),
-            "s": round(float(w.get("s", 0)), precision),
-            "e": round(float(w.get("e", 0)), precision),
-        }
-        for w in words
-    ]
-
-
 def build_transcript_windows(transcript_result, video_duration,
                              window_seconds=90, overlap_seconds=30):
     """

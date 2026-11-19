@@ -1,26 +1,14 @@
-"""Names for the free plan's watermarked delivery copies.
+"""Names for the watermarked delivery copies (dormant: nothing sets WATERMARK).
 
-Every file the pipeline and the clip editor write is CLEAN. On the free plan
+Every file the pipeline and the clip editor write is CLEAN. With the mark on,
 the file that is *served* is a copy of the final one with the mark burned in,
-named ``wm_<final>`` and kept next to it (and in R2 beside it). Two things
-follow from keeping both:
+named ``wm_<final>`` and kept next to it. The walk-backs that find the
+editable master under a served name (``app._strip_burned_captions`` and
+friends) treat the ``wm_`` prefix as the outermost layer, and the ``/videos``
+guard refuses the clean twins of a marked job.
 
-* an upgrade removes the watermark from the clips the user already has by
-  re-pointing each clip at its clean twin, with no re-encode and no source
-  video, which is what the upgrade modal has always promised
-  (``cloud.videos.unmark_user_library``);
-* the walk-backs that find the editable master under a served name
-  (``app._strip_burned_captions`` and friends) treat the ``wm_`` prefix as the
-  outermost layer, and the ``/videos`` guard refuses the clean twins of a
-  free job so the copy cannot be fetched by stripping the prefix from a URL.
-
-Before 30-sep-2026 the mark was burned into the canonical reframe, so the
-only way to lose it was to run the whole job again: the first cancellation
-for "clip quality" was a user who paid 15 minutes after their first job and
-found the mark still there on every download and every restyle.
-
-No imports beyond the standard library on purpose: ``main.py``, ``app.py``
-and ``cloud/videos.py`` all use it and only the first of those has ffmpeg.
+No imports beyond the standard library on purpose: ``main.py`` and ``app.py``
+both use it and only the first of those has ffmpeg.
 """
 import os
 import re
@@ -80,8 +68,3 @@ def mark_job(job_dir: str) -> None:
         pass
 
 
-def unmark_job(job_dir: str) -> None:
-    try:
-        os.remove(os.path.join(job_dir, MARKER_FILE))
-    except OSError:
-        pass

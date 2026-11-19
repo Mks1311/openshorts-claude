@@ -48,31 +48,12 @@ def dirs(tmp_path, monkeypatch):
 
 @pytest.fixture()
 def calls(monkeypatch):
-    """Record the order of the metering step and the quality probe."""
-    order = []
-
+    """A quality probe that always passes and a URL check that allows all."""
     async def _probe(url):
-        order.append("probe")
-        return order_probe_result[0]
+        return {"max_height": 1080, "duration": 600}
 
-    async def _reserve(request, url, input_path, job_id, max_minutes=None, **_kw):
-        order.append("reserve")
-        request.state.reserved_minutes = 12
-        return 7, 1, "res-1", "starter", None
-
-    released = []
-
-    class _FakeMetering:
-        @staticmethod
-        async def release_reservation(rid):
-            released.append(rid)
-
-    order_probe_result = [{"max_height": 1080, "duration": 600}]
     monkeypatch.setattr(app_module, "_probe_youtube_quality", _probe)
-    monkeypatch.setattr(app_module, "reserve_process_minutes", _reserve)
-    monkeypatch.setattr(app_module, "_metering", _FakeMetering)
     monkeypatch.setattr(app_module, "_validate_source_url", _allow_url)
-    return {"order": order, "released": released, "probe_result": order_probe_result}
 
 
 async def _allow_url(url):
@@ -116,41 +97,6 @@ def test_youtube_search_page_is_refused_before_any_probe(dirs, monkeypatch):
     assert probed == []
 
 
-def test_quality_probe_runs_after_metering(dirs, calls):
-    resp = _post_process({"url": "https://www.youtube.com/watch?v=ok", "acknowledged": True})
-    assert resp.status_code == 200, resp.text
-    assert calls["order"] == ["reserve", "probe"]
-    assert calls["released"] == []
-
-
-def test_low_quality_confirmation_releases_the_reservation(dirs, calls):
-    calls["probe_result"][0] = {"max_height": 360, "duration": 600}
-    resp = _post_process({"url": "https://www.youtube.com/watch?v=lowq", "acknowledged": True})
-    assert resp.status_code == 200
-    assert resp.json()["needs_confirmation"] is True
-    assert calls["released"] == ["res-1"]
-    assert os.listdir(dirs) == []          # no orphan job dir
-    assert app_module.jobs == {}
-
-
-def test_short_source_rejection_releases_the_reservation(dirs, calls):
-    calls["probe_result"][0] = {"max_height": 1080, "duration": 20}
-    resp = _post_process({"url": "https://www.youtube.com/watch?v=short", "acknowledged": True})
-    assert resp.status_code == 400
-    assert calls["released"] == ["res-1"]
-    assert os.listdir(dirs) == []
-
-
-def test_metered_url_job_is_capped_at_the_reserved_minutes(dirs, calls):
-    resp = _post_process({"url": "https://www.youtube.com/watch?v=ok", "acknowledged": True})
-    job_id = resp.json()["job_id"]
-    job = app_module.jobs[job_id]
-    assert job["env"]["SOURCE_CAP_MINUTES"] == "12"
-    assert "MAX_SOURCE_MINUTES" not in job["env"]
-    manifest = json.load(open(os.path.join(dirs, job_id, app_module._RESUME_FILE)))
-    assert manifest["source_cap_minutes"] == 12
-
-
 def test_resumed_job_keeps_its_safety_cap(dirs, monkeypatch):
     monkeypatch.setattr(app_module, "INSTANCE_ID", "me")
     monkeypatch.setattr(app_module, "_draining", False)
@@ -173,17 +119,15 @@ def test_resumed_job_keeps_its_safety_cap(dirs, monkeypatch):
 # Subprocess environment
 # --------------------------------------------------------------------------- #
 def test_child_env_drops_server_secrets(monkeypatch):
-    for name in ("STRIPE_SECRET_KEY", "JWT_SECRET", "DATABASE_URL", "SMTP_PASSWORD",
-                 "TELEGRAM_BOT_TOKEN", "AGENTLEDGER_API_KEY", "R2_SECRET_ACCESS_KEY",
-                 "MANAGED_UPLOAD_POST_API_KEY", "GOOGLE_CLIENT_SECRET"):
+    for name in app_module.CHILD_ENV_DENYLIST:
         monkeypatch.setenv(name, "secret")
-    for name in ("YOUTUBE_COOKIES", "PROXY_URL", "STATIC_PROXY_URLS", "GEMINI_API_KEY",
+    for name in ("YOUTUBE_COOKIES", "PROXY_URL", "STATIC_PROXY_URLS",
                  "BGUTIL_SCRIPT_PATH", "FFMPEG_ENCODER", "WHISPER_MODEL"):
         monkeypatch.setenv(name, "keep")
     env = app_module.child_env()
     for name in app_module.CHILD_ENV_DENYLIST:
         assert name not in env
-    for name in ("YOUTUBE_COOKIES", "PROXY_URL", "STATIC_PROXY_URLS", "GEMINI_API_KEY",
+    for name in ("YOUTUBE_COOKIES", "PROXY_URL", "STATIC_PROXY_URLS",
                  "BGUTIL_SCRIPT_PATH", "FFMPEG_ENCODER", "WHISPER_MODEL"):
         assert env[name] == "keep"
 
@@ -210,71 +154,16 @@ def test_pipeline_code_reads_none_of_the_dropped_secrets():
             elif isinstance(node, ast.ImportFrom) and node.module:
                 names = [node.module.split(".")[0]]
             for n in names:
-                assert n != "cloud", f"{mod} imports cloud/, which reads server secrets"
                 if n in local:
                     stack.append(n)
 
 
 def test_job_env_has_no_server_secrets(dirs, calls, monkeypatch):
-    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_live_x")
-    monkeypatch.setenv("JWT_SECRET", "jwt")
+    monkeypatch.setenv("UPLOAD_POST_API_KEY", "up_x")
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "el_x")
     resp = _post_process({"url": "https://www.youtube.com/watch?v=ok", "acknowledged": True})
     env = app_module.jobs[resp.json()["job_id"]]["env"]
-    assert "STRIPE_SECRET_KEY" not in env and "JWT_SECRET" not in env
-    assert env["GEMINI_API_KEY"] == "test-key"
-
-
-# --------------------------------------------------------------------------- #
-# Owner checks (cloud mode)
-# --------------------------------------------------------------------------- #
-class _User:
-    def __init__(self, uid):
-        self.id = uid
-        self.plan = "starter"
-
-
-@pytest.fixture()
-def cloud_as(monkeypatch):
-    who = {"user": None}
-
-    async def _from_request(request):
-        return who["user"]
-    monkeypatch.setattr(app_module, "BILLING_ENABLED", True)
-    monkeypatch.setattr(app_module, "_user_from_request", _from_request)
-    return who
-
-
-def test_publish_status_is_owner_only(cloud_as, monkeypatch):
-    monkeypatch.setattr(app_module, "publish_jobs", {
-        "p1": {"status": "done", "result": {"ok": 1}, "error": None, "user_id": "owner"}})
-    cloud_as["user"] = _User("stranger")
-    assert _client_call("get", "/api/thumbnail/publish/status/p1").status_code == 404
-    cloud_as["user"] = None
-    assert _client_call("get", "/api/thumbnail/publish/status/p1").status_code == 404
-    cloud_as["user"] = _User("owner")
-    resp = _client_call("get", "/api/thumbnail/publish/status/p1")
-    assert resp.status_code == 200
-    assert resp.json() == {"status": "done", "result": {"ok": 1}, "error": None}
-
-
-def test_render_status_is_owner_only(cloud_as, monkeypatch):
-    monkeypatch.setattr(app_module, "_render_owners", {"r-1": "owner"})
-    cloud_as["user"] = _User("stranger")
-    assert _client_call("get", "/api/render/r-1").status_code == 404
-    # An id this instance never issued is not proxied at all.
-    cloud_as["user"] = _User("owner")
-    assert _client_call("get", "/api/render/unknown-id").status_code == 404
-
-
-def test_thumbnail_generate_refuses_someone_elses_session(cloud_as, monkeypatch):
-    async def _gemini(request):
-        return "k"
-    monkeypatch.setattr(app_module, "resolve_gemini", _gemini)
-    monkeypatch.setattr(app_module, "thumbnail_sessions", {"s-1": {"user_id": "owner"}})
-    cloud_as["user"] = _User("stranger")
-    resp = _client_call("post", "/api/thumbnail/generate",
-                        data={"session_id": "s-1", "title": "t"})
-    assert resp.status_code == 404
+    assert "UPLOAD_POST_API_KEY" not in env and "ELEVENLABS_API_KEY" not in env
 
 
 # --------------------------------------------------------------------------- #
@@ -317,35 +206,3 @@ class TestSafetyCap:
         assert self._seconds(path) >= 149
 
 
-def test_render_requests_are_bounded_and_scoped(monkeypatch):
-    """The render service trusts its caller: it writes under OUTPUT_DIR/<jobId>
-    and loads videoUrl in a headless browser."""
-    import uuid as _uuid
-    from fastapi import HTTPException as _HTTPException
-    import app as _app
-
-    jid = str(_uuid.uuid4())
-    ok = {"jobId": jid, "clipIndex": 0, "props": {
-        "videoUrl": f"/videos/{jid}/clip.mp4", "durationInFrames": 900,
-        "fps": 30, "width": 1080, "height": 1920}}
-
-    async def _owner_ok(request, record):
-        return None
-    monkeypatch.setattr(_app, "BILLING_ENABLED", True)
-    monkeypatch.setattr(_app, "_assert_job_owner", _owner_ok)
-    monkeypatch.setitem(_app.jobs, jid, {"user_id": "u1"})
-    import asyncio as _asyncio
-    _asyncio.run(_app._check_render_body(None, ok))
-
-    def bad(**over):
-        body = {**ok, "props": {**ok["props"]}}
-        for k, v in over.items():
-            (body if k == "jobId" else body["props"])[k] = v
-        with pytest.raises(_HTTPException):
-            _asyncio.run(_app._check_render_body(None, body))
-
-    bad(jobId="../../etc")
-    bad(videoUrl="http://169.254.169.254/latest/meta-data")
-    bad(videoUrl=f"/videos/{_uuid.uuid4()}/clip.mp4")
-    bad(durationInFrames=10**9)
-    bad(width=100000)

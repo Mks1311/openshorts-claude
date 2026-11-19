@@ -1,6 +1,5 @@
 # Direct YouTube publishing (`youtube_publish.py`)
 
-Self-host only: every `/api/youtube/*` route is 404 when `BILLING_ENABLED`.
 One operator connects one channel; Upload-Post stays as the other way to post.
 Instagram and Facebook can follow the same shape (module + `output/.<name>.json`
 + per-job sidecar).

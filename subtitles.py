@@ -267,7 +267,7 @@ AUTO_CAPTION_STYLE = {
 }
 
 
-# Named looks for /api/subtitle `preset` (and the MCP add_subtitles tool), in
+# Named looks for /api/subtitle `preset`, in
 # request-field names. Mirrors the dashboard's CAPTION_PRESETS in
 # SubtitleModal.jsx (a test checks the ids): "default" is what every clip
 # ships with, the rest are the short-form looks trending in 2026.
@@ -311,12 +311,6 @@ CAPTION_PRESETS = {
 # Characters per line at font size 44, per font (Anton is condensed,
 # Montserrat wide). Mirrors lineBudget in SubtitleModal.jsx.
 _LINE_CHARS = {"Anton": 16, "Montserrat ExtraBold": 9, "Impact": 16}
-
-
-def line_budget(font_name, font_size):
-    """max_chars that keeps one line inside the 9:16 frame at this size."""
-    size = _clamp_number(font_size, 10, 200, 44)
-    return max(6, round(_LINE_CHARS.get(font_name, 14) * 44 / size))
 
 
 # A caption block is ONE line, always. The character budget cannot promise

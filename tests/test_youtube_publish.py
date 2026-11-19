@@ -1,10 +1,10 @@
-"""Direct YouTube Shorts publishing (self-host): /api/youtube/*.
+"""Direct YouTube Shorts publishing: /api/youtube/*.
 
 What must hold: the OAuth round trip stores the tokens in output/.youtube.json
 and refuses an unknown state; an expired access token is refreshed and a dead
 refresh token says "reconnect"; an upload is resumable, carries #Shorts, is
 private while scheduled and is recorded in the job's .youtube.json; a used-up
-quota says so with 429; the cloud does not offer any of it. Google is an
+quota says so with 429. Google is an
 httpx.MockTransport: no test reaches the network.
 """
 import asyncio
@@ -67,7 +67,6 @@ def google(tmp_path, monkeypatch):
     monkeypatch.setattr(yt, "_pending", {})
     monkeypatch.setenv("YOUTUBE_CLIENT_ID", "cid")
     monkeypatch.setenv("YOUTUBE_CLIENT_SECRET", "secret")
-    monkeypatch.setattr(app_module, "BILLING_ENABLED", False)
     return g
 
 
@@ -206,6 +205,3 @@ def test_disconnect_forgets_tokens_keeps_settings(google):
     assert any(str(r.url).startswith(yt.REVOKE_URL) for r in google.requests)
 
 
-def test_not_offered_with_billing(google, monkeypatch):
-    monkeypatch.setattr(app_module, "BILLING_ENABLED", True)
-    assert _call("GET", "/api/youtube/status").status_code == 404

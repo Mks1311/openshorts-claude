@@ -45,25 +45,3 @@ def test_lists_are_copies():
     assert yt_clients.hd_extractor_args("", "/x.js")["youtube"]["player_client"] == ["default", "mweb"]
 
 
-def test_probe_uses_the_same_lists(monkeypatch):
-    metering = pytest.importorskip("cloud.metering")
-    monkeypatch.setenv("BGUTIL_SCRIPT_PATH", "/opt/gen.js")
-    monkeypatch.delenv("BGUTIL_BASE_URL", raising=False)
-    monkeypatch.setenv("STATIC_PROXY_URLS", "")
-    monkeypatch.setenv("PROXY_URL", "")
-    monkeypatch.delenv("YOUTUBE_COOKIES", raising=False)
-    seen = {}
-
-    def fake(url, proxies, strategies, static_errors, paid, ck_path):
-        seen["strategies"] = strategies
-        return 1.0
-
-    monkeypatch.setattr(metering, "_probe_with_proxies", fake)
-    metering.probe_url_minutes("https://www.youtube.com/watch?v=abc")
-    # (extractor args, send the cookies): the fallback step goes out anonymously,
-    # like the download's 'fallback-static' attempt — see
-    # tests/test_probe_anonymous_fallback.py.
-    assert seen["strategies"] == [
-        (yt_clients.hd_extractor_args("", "/opt/gen.js"), True),
-        (yt_clients.fallback_extractor_args("", "/opt/gen.js"), False),
-    ]
