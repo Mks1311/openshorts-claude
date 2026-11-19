@@ -10,20 +10,18 @@ title rather than repeating it. Rules baked in: payoff inside 50 characters
 (phones cut there), keyword in the first 3 words, same language as the
 transcript.
 
-Text model is `GEMINI_MODEL_THUMBNAIL` (default `gemini-3.7-flash`), deliberately
-not `GEMINI_MODEL`: flash-lite is fine for a closed-choice layout pick and
-visibly worse at creative titles. Image model is `GEMINI_IMAGE_MODEL` (default
-`gemini-3.1-flash-image`).
+Every Studio call is the Claude task `studio` (default `sonnet`, picked in
+Settings → Models): a small model is fine for a closed-choice layout pick and
+visibly worse at creative titles. There is no image model.
 
 ## Images
 
-Thumbnails are `count` **different concepts**, not one prompt repeated: a text
-call designs each (hook text, side for the text, palette, scene prompt), then one
-image call per concept in parallel. By default (`burn_text=true`) the image model
-leaves that side as negative space and PIL sets the text in Anton with a black
-stroke, so accents and spelling are never wrong; the `AI painted` toggle lets the
-model render the text itself. Every output is cover-cropped to 1280x720 and
-saved under YouTube's 2 MB limit.
+Claude cannot draw. Thumbnails are `count` **different concepts** built on one
+picture: the uploaded face photo, else the frame picked below, else the uploaded
+background. One text call designs each concept (hook text, which side it sits
+on, its colour) and PIL sets that text in Anton with a black stroke, so accents
+and spelling are never wrong (`burn_text=false` returns the picture as is).
+Every output is cover-cropped to 1280x720 and saved under YouTube's 2 MB limit.
 
 `GET /api/thumbnail/frames/{session}` scores sampled frames by face area and
 sharpness (MediaPipe + Laplacian), keeps them spread across the runtime, and the

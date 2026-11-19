@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-OpenShorts is an AI-powered vertical video generator that turns long YouTube videos or local uploads into short 9:16 clips for TikTok, Instagram Reels and YouTube Shorts. Every AI step runs on Claude through the headless `claude` CLI (`claude_cli.py`, via `llm_backend.py`) on the signed-in Claude subscription: no API key. Text questions use `LLM_MODEL` (default `sonnet`), frame questions `claude_cli.VISION_MODEL` (`haiku`). Prompts and answer schemas live in `llm_prompts.py`. Cloud edition code (`BILLING_ENABLED`, `cloud/`) is still present.
+shorts maxxing (forked from OpenShorts; module, env and repo names still say openshorts) is a self-hosted vertical video generator that turns long YouTube videos or local uploads into short 9:16 clips for TikTok, Instagram Reels and YouTube Shorts. Jobs run one at a time from a queue (`MAX_CONCURRENT_JOBS=1` on self-host). Every AI step runs on Claude through the headless `claude` CLI (`claude_cli.py`, via `llm_backend.py`) on the signed-in Claude subscription: no API key. Each call belongs to a task (`claude_cli.TASKS`) whose model is picked in Settings, and its tokens are recorded per job and per task. Prompts and answer schemas live in `llm_prompts.py`. Cloud edition code (`BILLING_ENABLED`, `cloud/`) is still present but unused.
 
 ## Development Commands
 
@@ -33,12 +33,13 @@ Ingest (yt-dlp or upload) → transcription (word timestamps) → scene detectio
 - `editor.py` (Claude edit plans → FFmpeg effects), `pro_mode.py` (talking-head re-edit), `hooks.py` (hook overlays), `subtitles.py` (SRT/ASS, burning), `translate.py` (ElevenLabs dubbing), `thumbnail.py`.
 - `mcp_server.py`, `mcp_stdio.py`: MCP over HTTP and stdio.
 - `cloud/`: auth, API keys, metering, billing, lifecycle emails, account erasure, autopilot, proxy ledger, alerts, queue watch.
-- `dashboard/src/App.jsx`: the whole dashboard (Clips, YouTube Studio, Settings); `lib/serverConfig.js` reads `/api/config`. The billing, sign-in and account screens were removed from the UI; their backend (`cloud/`) stays dormant while `BILLING_ENABLED` is off.
+- `dashboard/src/App.jsx`: the dashboard shell (Clips, Queue, YouTube Studio, Settings); `components/QueuePage.jsx` + `lib/jobs.js` (the `/api/jobs` feed), `components/LogPanel.jsx`, `components/ModelSettings.jsx` (models and usage); `lib/serverConfig.js` reads `/api/config`. The billing, sign-in and account screens were removed from the UI; their backend (`cloud/`) stays dormant while `BILLING_ENABLED` is off.
 
 ## Subsystem reference (read before touching)
 
 - Layout picker, reframing modes, hook grounding → `docs/architecture/layouts-and-reframing.md`
 - Clip count, silent-footage fallback, Claude CLI → `docs/architecture/clip-selection.md`
+- Models per task, token usage records → `docs/architecture/models-and-usage.md`
 - Thumbnail Studio → `docs/architecture/thumbnails.md`
 - Pro mode (talking-head re-edit, per-clip switch) → `docs/architecture/pro-mode.md`
 - API endpoints, API keys, MCP, OAuth, webhooks → `docs/architecture/agent-access.md`
@@ -64,6 +65,7 @@ Ingest (yt-dlp or upload) → transcription (word timestamps) → scene detectio
 - The scoring pass ranks every window (global top N), never "choose up to K per batch". The `min_clips` floor is enforced in code.
 - No stage sends a video file to the model: Claude gets timestamped JPEG frames (`frame_sampler.jpegs_every`). `get_visual_clips` watches near-equal stretches of at most 100 frames (`vision_segments`).
 - Every `claude -p` call is isolated (own system prompt, no tools/settings/MCP, scratch cwd) to keep it near 1.5k input tokens. Tests never reach the real CLI (`CLAUDE_BIN` points nowhere in `tests/conftest.py`).
+- Every Claude call passes its `task` (a key of `claude_cli.TASKS`): that picks the model and labels its usage. A new kind of call adds a task. Model names are validated by `claude_cli.valid_model` wherever they come from. Settings and usage live in dot files of `output/` (`.models.json`, `.usage.jsonl`), which no sweep deletes; tests redirect them to a temp dir.
 
 **Jobs, GPU, deploys**
 - Call `transcribe_backends.release_models()` after any ASR (job processes and in-API transcriptions alike). Size `MAX_CONCURRENT_JOBS` by free VRAM first.

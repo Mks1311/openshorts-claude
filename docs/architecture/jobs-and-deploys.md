@@ -5,8 +5,17 @@
 Async job queue with semaphore-based concurrency control, sized by
 `MAX_CONCURRENT_JOBS` (default 5 with billing, 1 on self-host so submitted jobs
 run one after another). Jobs auto-clean after 1 hour (24 h on self-host).
-Self-host lists every held job at `GET /api/jobs` (the dashboard's job list
-under the new-video form); the cloud answers 404 there.
+Self-host lists every held job at `GET /api/jobs` (the dashboard's Queue page
+and the short list under the new-video form); the cloud answers 404 there. Each
+row carries what was asked (`label`, `range`, `settings`, recorded at submit and
+kept in the resume manifest), where it stands (`position`, `eta_seconds`,
+`started_at`, the running job's log), how it ended (`finished_at`, `error`) and
+its Claude `usage` (see `models-and-usage.md`).
+
+`POST /api/jobs/{id}/stop` (self-host only) ends a running job within ~2 s. A
+job still waiting in line is taken off the queue at once (`_take_off_queue`),
+ends failed with "Stopped before it finished." and loses its resume manifest,
+instead of waiting for a slot that may be hours away.
 
 The real limit on a GPU host is VRAM, not CPU: each `main.py` job holds Parakeet
 (onnxruntime CUDA), TransNetV2 (torch, ~2 GB at peak) and an NVENC session. When
